@@ -1,9 +1,9 @@
-name: Deploy to Hostinger
+name: Deploy NestJS API
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches:
+      - main
 
 jobs:
   deploy:
@@ -11,30 +11,18 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
-    - name: Deploy to Hostinger via SSH
-      uses: appleboy/ssh-action@master
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.SSH_HOST }}
         username: ${{ secrets.SSH_USERNAME }}
-        password: ${{ secrets.SSH_PASSWORD }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
         port: ${{ secrets.SSH_PORT }}
         script: |
-          cd ~/public_html/api
+          cd ${{ secrets.DEPLOY_PATH }}
           git pull origin main
-          npm install --production
+          npm install
           npm run build
-          npm run prisma:generate
-          npm run prisma:migrate:deploy
-          pm2 restart pg-api || npm run start:pm2
-          pm2 save
-          echo "Deployment completed successfully!"
-    
-    - name: Deployment Status
-      if: success()
-      run: echo "✅ Deployment to Hostinger successful!"
-    
-    - name: Deployment Failed
-      if: failure()
-      run: echo "❌ Deployment failed. Check logs above."
+          pm2 restart pg-web-api || pm2 start dist/main.js --name pg-web-api
