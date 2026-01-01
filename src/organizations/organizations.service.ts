@@ -60,38 +60,32 @@ export class OrganizationsService {
 
     const [employeesGrouped, tenantsGrouped] = await Promise.all([
       pgIds.length
-        ? this.consumerPrisma.users.groupBy({
-            by: ['pg_id'],
-            where: {
-              is_deleted: false,
-              pg_id: { in: pgIds },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve([] as any[]),
+        ? this.consumerPrisma.$queryRawUnsafe<
+            Array<{ pg_id: number | null; _count: number }>
+          >(
+            `SELECT pg_id, COUNT(*) as _count FROM users WHERE is_deleted = 0 AND pg_id IN (${pgIds.join(',')}) GROUP BY pg_id`
+          )
+        : Promise.resolve([] as Array<{ pg_id: number | null; _count: number }>),
       pgIds.length
-        ? this.consumerPrisma.tenants.groupBy({
-            by: ['pg_id'],
-            where: {
-              is_deleted: false,
-              pg_id: { in: pgIds },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve([] as any[]),
+        ? this.consumerPrisma.$queryRawUnsafe<
+            Array<{ pg_id: number | null; _count: number }>
+          >(
+            `SELECT pg_id, COUNT(*) as _count FROM tenants WHERE is_deleted = 0 AND pg_id IN (${pgIds.join(',')}) GROUP BY pg_id`
+          )
+        : Promise.resolve([] as Array<{ pg_id: number | null; _count: number }>),
     ]);
 
     const employeesByPgId = new Map<number, number>();
     for (const row of employeesGrouped) {
       if (row.pg_id != null) {
-        employeesByPgId.set(row.pg_id, row._count?._all ?? 0);
+        employeesByPgId.set(row.pg_id, row._count ?? 0);
       }
     }
 
     const tenantsByPgId = new Map<number, number>();
     for (const row of tenantsGrouped) {
       if (row.pg_id != null) {
-        tenantsByPgId.set(row.pg_id, row._count?._all ?? 0);
+        tenantsByPgId.set(row.pg_id, row._count ?? 0);
       }
     }
 
@@ -189,38 +183,32 @@ export class OrganizationsService {
 
     const [employeesGrouped, tenantsGrouped] = await Promise.all([
       pgIds.length
-        ? this.consumerPrisma.users.groupBy({
-            by: ['pg_id'],
-            where: {
-              is_deleted: false,
-              pg_id: { in: pgIds },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve([] as any[]),
+        ? this.consumerPrisma.$queryRawUnsafe<
+            Array<{ pg_id: number | null; _count: number }>
+          >(
+            `SELECT pg_id, COUNT(*) as _count FROM users WHERE is_deleted = 0 AND pg_id IN (${pgIds.join(',')}) GROUP BY pg_id`
+          )
+        : Promise.resolve([] as Array<{ pg_id: number | null; _count: number }>),
       pgIds.length
-        ? this.consumerPrisma.tenants.groupBy({
-            by: ['pg_id'],
-            where: {
-              is_deleted: false,
-              pg_id: { in: pgIds },
-            },
-            _count: { _all: true },
-          })
-        : Promise.resolve([] as any[]),
+        ? this.consumerPrisma.$queryRawUnsafe<
+            Array<{ pg_id: number | null; _count: number }>
+          >(
+            `SELECT pg_id, COUNT(*) as _count FROM tenants WHERE is_deleted = 0 AND pg_id IN (${pgIds.join(',')}) GROUP BY pg_id`
+          )
+        : Promise.resolve([] as Array<{ pg_id: number | null; _count: number }>),
     ]);
 
     const employeesByPgId = new Map<number, number>();
     for (const row of employeesGrouped) {
       if (row.pg_id != null) {
-        employeesByPgId.set(row.pg_id, row._count?._all ?? 0);
+        employeesByPgId.set(row.pg_id, row._count ?? 0);
       }
     }
 
     const tenantsByPgId = new Map<number, number>();
     for (const row of tenantsGrouped) {
       if (row.pg_id != null) {
-        tenantsByPgId.set(row.pg_id, row._count?._all ?? 0);
+        tenantsByPgId.set(row.pg_id, row._count ?? 0);
       }
     }
 
