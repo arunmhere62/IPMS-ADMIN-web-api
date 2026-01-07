@@ -28,7 +28,11 @@ jobs:
             printf '%s' "${{ secrets.VPS_ENV }}" | base64 -d > .env || { echo "env decode failed: VPS_ENV must be base64 of the .env file"; exit 1; }
 
             npm install --legacy-peer-deps
+            npm run prisma:generate:all
             npm run build
 
             pm2 reload pg-admin-api --update-env || pm2 restart pg-admin-api --update-env
             pm2 save
+            
+            echo "✅ Deployment completed successfully!"
+            pm2 status
