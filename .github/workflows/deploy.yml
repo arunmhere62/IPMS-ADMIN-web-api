@@ -2,24 +2,22 @@ name: Deploy NestJS API
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
-      - name: Deploy to VPS
-        run: |
-          ssh -p 22 -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          debug: false
+          script: |
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
 
@@ -29,9 +27,8 @@ jobs:
             umask 077
             printf '%s' "${{ secrets.VPS_ENV }}" | base64 -d > .env || { echo "env decode failed: VPS_ENV must be base64 of the .env file"; exit 1; }
 
-            npm install
+            npm install --legacy-peer-deps
             npm run build
 
-            pm2 reload pg-admin-api --update-env || pm2 start ecosystem.config.js --only pg-admin-api
+            pm2 reload pg-admin-api --update-env || pm2 restart pg-admin-api --update-env
             pm2 save
-          EOF
