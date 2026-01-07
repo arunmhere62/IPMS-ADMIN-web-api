@@ -1,13 +1,12 @@
 module.exports = {
   apps: [
     {
-      name: 'pg-api',
+      name: 'pg-admin-api',
       script: './dist/main.js',
       instances: 'max', // Use all CPU cores
       exec_mode: 'cluster',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
       },
       error_file: './logs/err.log',
       out_file: './logs/out.log',
