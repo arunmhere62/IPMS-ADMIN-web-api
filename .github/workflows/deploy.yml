@@ -2,38 +2,36 @@ name: Deploy NestJS API
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Prepare SSH key
-        run: |
-          mkdir -p /github/home/.ssh
-          echo "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > /github/home/.ssh/id_ed25519
-          chmod 600 /github/home/.ssh/id_ed25519
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key_path: /github/home/.ssh/id_ed25519
-          port: 22
-          script: |
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Deploy to VPS
+        run: |
+          ssh -p 22 -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
 
             git fetch --all
             git reset --hard origin/main
 
-            echo "${{ secrets.VPS_ENV }}" | base64 -d > .env
+            umask 077
+            printf '%s' "${{ secrets.VPS_ENV }}" | base64 -d > .env || { echo "env decode failed: VPS_ENV must be base64 of the .env file"; exit 1; }
 
             npm install
             npm run build
 
-            pm2 restart admin-api --update-env || pm2 start ecosystem.config.js --only admin-api
+            pm2 reload pg-admin-api --update-env || pm2 start ecosystem.config.js --only pg-admin-api
             pm2 save
+          EOF
