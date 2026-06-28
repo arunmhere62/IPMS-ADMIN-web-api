@@ -2,7 +2,7 @@ name: Deploy NestJS API
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "development" ]
 
 jobs:
   deploy:
@@ -19,24 +19,42 @@ jobs:
           debug: false
           script: |
             set -e
-            cd ${{ secrets.DEPLOY_PATH }}
 
-            # Backup .env before pulling
-            cp .env .env.backup
+            # Set deployment path and docker-compose file based on branch
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+              COMPOSE_FILE="docker-compose.yml"
+              NETWORK_NAME="ipms_admin_api"
+            elif [ "${{ github.ref }}" = "refs/heads/development" ]; then
+              DEPLOY_PATH="${{ secrets.DEPLOY_PATH_DEV }}"
+              COMPOSE_FILE="docker-compose.dev.yml"
+              NETWORK_NAME="ipms_admin_api_dev"
+            else
+              echo "Unsupported branch: ${{ github.ref }}"
+              exit 1
+            fi
+
+            echo "[deploy] Branch: ${{ github.ref }}"
+            echo "[deploy] Path: $DEPLOY_PATH"
+            echo "[deploy] Compose file: $COMPOSE_FILE"
+
+            if [ ! -d "$DEPLOY_PATH" ]; then
+              echo "[deploy] Directory does not exist: $DEPLOY_PATH"
+              echo "[deploy] Current directory: $(pwd)"
+              exit 1
+            fi
+
+            cd "$DEPLOY_PATH"
+            echo "[deploy] cd success: $(pwd)"
 
             git fetch --all
-            git reset --hard origin/main
+            git reset --hard origin/${{ github.ref_name }}
 
-            # Restore .env (don't overwrite from GitHub)
-            mv .env.backup .env
+            # Clean previous stack to avoid docker network label conflicts
+            docker compose -f $COMPOSE_FILE down --remove-orphans || true
+            docker network rm $NETWORK_NAME || true
 
-            npm install --legacy-peer-deps
-            npm run prisma:generate:all
-            npm run build
+            docker compose -f $COMPOSE_FILE up -d --build
+            docker compose -f $COMPOSE_FILE ps
 
-            pm2 delete pg-admin-api || true
-            pm2 start ecosystem.config.js
-            pm2 save
-            
             echo "Deployment completed!"
-            pm2 status

@@ -244,6 +244,7 @@ model organization {
   legal_documents                           legal_documents[]
   users_organization_superadmin_idTousers   users?              @relation("organization_superadmin_idTousers", fields: [superadmin_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_org_superadmin")
   pg_locations                              pg_locations[]
+  tenant_tickets                            tenant_tickets[]
   users_users_organization_idToorganization users[]             @relation("users_organization_idToorganization")
 
   @@index([superadmin_id], map: "fk_org_superadmin")
@@ -313,6 +314,7 @@ model pg_locations {
   rent_payments      rent_payments[]
   rooms              rooms[]
   tenant_allocations tenant_allocations[]
+  tenant_tickets     tenant_tickets[]
   tenants            tenants[]
   visitors           visitors[]
 
@@ -408,6 +410,9 @@ model rent_payments {
   @@index([pg_id], map: "fk_tenant_payment_pg")
   @@index([room_id], map: "fk_tenant_payment_room")
   @@index([tenant_id], map: "fk_tenant_payment_tenant")
+  @@index([tenant_id, cycle_id], map: "idx_tenant_payment_cycle")
+  @@index([tenant_id, payment_date], map: "idx_tenant_payment_date")
+  @@index([tenant_id, status, is_deleted], map: "idx_tenant_payment_status")
 }
 
 model role_permissions {
@@ -473,29 +478,75 @@ model state {
   @@index([country_code], map: "fk_state_country")
 }
 
+model subscription_invoices {
+  s_no                  Int                          @id @default(autoincrement())
+  invoice_number        String                       @unique(map: "invoice_number") @db.VarChar(50)
+  payment_id            Int
+  user_id               Int
+  organization_id       Int
+  subscription_id       Int
+  plan_id               Int
+  invoice_date          DateTime                     @default(now()) @db.DateTime(0)
+  seller_legal_name     String                       @db.VarChar(100)
+  seller_trade_name     String                       @db.VarChar(100)
+  seller_gstin          String                       @db.VarChar(15)
+  seller_address        String                       @db.VarChar(255)
+  seller_state_code     String                       @db.VarChar(2)
+  seller_duns_number    String?                      @db.VarChar(9)
+  buyer_name            String                       @db.VarChar(100)
+  buyer_gstin           String?                      @db.VarChar(15)
+  buyer_address         String                       @db.VarChar(255)
+  buyer_state_code      String                       @db.VarChar(2)
+  place_of_supply       String                       @db.VarChar(100)
+  service_description   String                       @db.VarChar(255)
+  hsn_sac_code          String                       @db.VarChar(10)
+  taxable_value         Decimal                      @db.Decimal(10, 2)
+  cgst_rate             Decimal?                     @default(0.00) @db.Decimal(5, 2)
+  cgst_amount           Decimal?                     @default(0.00) @db.Decimal(10, 2)
+  sgst_rate             Decimal?                     @default(0.00) @db.Decimal(5, 2)
+  sgst_amount           Decimal?                     @default(0.00) @db.Decimal(10, 2)
+  igst_rate             Decimal?                     @default(0.00) @db.Decimal(5, 2)
+  igst_amount           Decimal?                     @default(0.00) @db.Decimal(10, 2)
+  total_amount          Decimal                      @db.Decimal(10, 2)
+  gst_number            String?                      @db.VarChar(15)
+  billing_address       String?                      @db.VarChar(255)
+  is_reverse_charge     Boolean                      @default(false)
+  status                subscription_invoices_status @default(ACTIVE)
+  created_at            DateTime                     @default(now()) @db.DateTime(0)
+  updated_at            DateTime                     @default(now()) @db.DateTime(0)
+  subscription_payments subscription_payments        @relation(fields: [payment_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_invoice_payment")
+
+  @@index([payment_id], map: "fk_invoice_payment")
+  @@index([organization_id], map: "idx_invoice_org")
+  @@index([plan_id], map: "idx_invoice_plan")
+  @@index([subscription_id], map: "idx_invoice_subscription")
+  @@index([user_id], map: "idx_invoice_user")
+}
+
 model subscription_payments {
-  s_no               Int                                @id @default(autoincrement())
-  order_id           String                             @unique(map: "order_id") @db.VarChar(255)
-  user_id            Int
-  organization_id    Int
-  subscription_id    Int?
-  plan_id            Int
-  amount             String                             @db.VarChar(50)
-  currency           String                             @default("INR") @db.VarChar(10)
-  payment_type       subscription_payments_payment_type
-  status             subscription_payments_status       @default(INITIATED)
-  tracking_id        String?                            @db.VarChar(255)
-  bank_ref_no        String?                            @db.VarChar(255)
-  payment_mode       String?                            @db.VarChar(100)
-  status_code        String?                            @db.VarChar(50)
-  status_message     String?                            @db.Text
-  failure_message    String?                            @db.Text
-  response_data      Json?
-  metadata           Json?
-  created_at         DateTime                           @default(now()) @db.Timestamp(0)
-  updated_at         DateTime                           @default(now()) @db.Timestamp(0)
-  subscription_plans subscription_plans                 @relation(fields: [plan_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_subscription_payment_plan")
-  user_subscriptions user_subscriptions?                @relation(fields: [subscription_id], references: [s_no], onUpdate: NoAction, map: "fk_subscription_payment_subscription")
+  s_no                  Int                                @id @default(autoincrement())
+  order_id              String                             @unique(map: "order_id") @db.VarChar(255)
+  user_id               Int
+  organization_id       Int
+  subscription_id       Int?
+  plan_id               Int
+  amount                String                             @db.VarChar(50)
+  currency              String                             @default("INR") @db.VarChar(10)
+  payment_type          subscription_payments_payment_type
+  status                subscription_payments_status       @default(INITIATED)
+  tracking_id           String?                            @db.VarChar(255)
+  bank_ref_no           String?                            @db.VarChar(255)
+  payment_mode          String?                            @db.VarChar(100)
+  status_code           String?                            @db.VarChar(50)
+  status_message        String?                            @db.Text
+  failure_message       String?                            @db.Text
+  response_data         Json?
+  metadata              Json?
+  created_at            DateTime                           @default(now()) @db.Timestamp(0)
+  updated_at            DateTime                           @default(now()) @db.Timestamp(0)
+  subscription_invoices subscription_invoices[]
+  subscription_plans    subscription_plans                 @relation(fields: [plan_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_subscription_payment_plan")
+  user_subscriptions    user_subscriptions?                @relation(fields: [subscription_id], references: [s_no], onUpdate: NoAction, map: "fk_subscription_payment_subscription")
 
   @@index([plan_id], map: "fk_subscription_payment_plan")
   @@index([subscription_id], map: "fk_subscription_payment_subscription")
@@ -577,45 +628,50 @@ model tenant_rent_cycles {
 }
 
 model tenants {
-  s_no               Int                  @id @default(autoincrement())
-  tenant_id          String               @unique(map: "tenant_id") @db.VarChar(50)
-  name               String               @db.VarChar(100)
-  phone_no           String?              @db.VarChar(15)
-  whatsapp_number    String?              @db.VarChar(15)
-  email              String?              @db.VarChar(100)
-  pg_id              Int?
-  room_id            Int?
-  bed_id             Int?
-  check_in_date      DateTime             @db.DateTime(0)
-  check_out_date     DateTime?            @db.DateTime(0)
-  status             tenants_status?      @default(ACTIVE)
-  created_at         DateTime?            @default(now()) @db.Timestamp(0)
-  updated_at         DateTime?            @default(now()) @db.Timestamp(0)
-  images             Json?
-  proof_documents    Json?
-  is_deleted         Boolean?             @default(false)
-  occupation         String?              @db.VarChar(100)
-  tenant_address     String?              @db.VarChar(255)
-  city_id            Int?
-  state_id           Int?
-  deleted_at         DateTime?            @db.DateTime(0)
-  deleted_by         Int?
-  deleted_reason     String?              @db.VarChar(255)
-  advance_payments   advance_payments[]
-  current_bills      current_bills[]
-  refund_payments    refund_payments[]
-  rent_payments      rent_payments[]
-  tenant_allocations tenant_allocations[]
-  tenant_rent_cycles tenant_rent_cycles[]
-  city               city?                @relation(fields: [city_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tenants_city")
-  state              state?               @relation(fields: [state_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tenants_state")
-  pg_locations       pg_locations?        @relation(fields: [pg_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_1")
-  rooms              rooms?               @relation(fields: [room_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_2")
-  beds               beds?                @relation(fields: [bed_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_3")
+  s_no                 Int                  @id @default(autoincrement())
+  tenant_id            String               @unique(map: "tenant_id") @db.VarChar(50)
+  name                 String               @db.VarChar(100)
+  phone_no             String?              @db.VarChar(15)
+  whatsapp_number      String?              @db.VarChar(15)
+  email                String?              @db.VarChar(100)
+  pg_id                Int?
+  room_id              Int?
+  bed_id               Int?
+  check_in_date        DateTime             @db.DateTime(0)
+  check_out_date       DateTime?            @db.DateTime(0)
+  expected_vacate_date DateTime?            @db.DateTime(0)
+  status               tenants_status?      @default(ACTIVE)
+  created_at           DateTime?            @default(now()) @db.Timestamp(0)
+  updated_at           DateTime?            @default(now()) @db.Timestamp(0)
+  images               Json?
+  proof_documents      Json?
+  is_deleted           Boolean?             @default(false)
+  occupation           String?              @db.VarChar(100)
+  tenant_address       String?              @db.VarChar(255)
+  city_id              Int?
+  state_id             Int?
+  deleted_at           DateTime?            @db.DateTime(0)
+  deleted_by           Int?
+  deleted_reason       String?              @db.VarChar(255)
+  advance_payments     advance_payments[]
+  current_bills        current_bills[]
+  refund_payments      refund_payments[]
+  rent_payments        rent_payments[]
+  tenant_allocations   tenant_allocations[]
+  tenant_fcm_tokens    tenant_fcm_tokens[]
+  tenant_rent_cycles   tenant_rent_cycles[]
+  tenant_tickets       tenant_tickets[]
+  tenant_tokens        tenant_tokens[]
+  city                 city?                @relation(fields: [city_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tenants_city")
+  state                state?               @relation(fields: [state_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tenants_state")
+  pg_locations         pg_locations?        @relation(fields: [pg_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_1")
+  rooms                rooms?               @relation(fields: [room_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_2")
+  beds                 beds?                @relation(fields: [bed_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "tenants_ibfk_3")
 
   @@index([bed_id], map: "bed_id")
   @@index([city_id], map: "fk_tenants_city")
   @@index([state_id], map: "fk_tenants_state")
+  @@index([pg_id, status, is_deleted], map: "idx_tenants_pg_status_deleted")
   @@index([pg_id], map: "pg_location_id")
   @@index([room_id], map: "room_id")
 }
@@ -714,7 +770,7 @@ model user_subscriptions {
   plan_id               Int
   status                user_subscriptions_status @default(PENDING)
   start_date            DateTime                  @default(now()) @db.Timestamp(0)
-  end_date              DateTime                  @default(dbgenerated("'0000-00-00 00:00:00'")) @db.Timestamp(0)
+  end_date              DateTime?                 @db.Timestamp(0)
   auto_renew            Boolean                   @default(false)
   is_trial              Boolean                   @default(false)
   created_at            DateTime                  @default(now()) @db.Timestamp(0)
@@ -759,6 +815,7 @@ model users {
   organization_organization_superadmin_idTousers                        organization?               @relation("organization_superadmin_idTousers")
   otp_verifications                                                     otp_verifications[]
   pg_users                                                              pg_users[]
+  tenant_tickets                                                        tenant_tickets[]
   tokens                                                                tokens[]
   user_fcm_tokens                                                       user_fcm_tokens[]
   user_legal_acceptance_user_legal_acceptance_user_idTousers            user_legal_acceptance[]     @relation("user_legal_acceptance_user_idTousers")
@@ -804,6 +861,107 @@ model visitors {
   @@index([city_id], map: "fk_visitors_city")
   @@index([state_id], map: "fk_visitors_state")
   @@index([pg_id], map: "pg_location_id")
+}
+
+model app_settings {
+  s_no                        Int       @id @default(autoincrement())
+  is_maintenance_mode         Boolean   @default(false)
+  maintenance_message         String?   @db.VarChar(500)
+  is_registration_open        Boolean   @default(true)
+  force_update_android        Boolean   @default(false)
+  force_update_ios            Boolean   @default(false)
+  android_store_url           String?   @db.VarChar(500)
+  ios_store_url               String?   @db.VarChar(500)
+  max_login_attempts          Int       @default(5)
+  otp_expiry_seconds          Int       @default(300)
+  otp_resend_cooldown_seconds Int       @default(60)
+  created_at                  DateTime  @default(now()) @db.Timestamp(0)
+  updated_at                  DateTime  @default(now()) @db.Timestamp(0)
+  updated_by                  Int?
+  current_version_android     String?   @db.VarChar(20)
+  current_version_ios         String?   @db.VarChar(20)
+  minimum_version_android     String?   @db.VarChar(20)
+  minimum_version_ios         String?   @db.VarChar(20)
+  payment_gateway_enabled     Boolean?  @default(false)
+  announcement_title          String?   @db.VarChar(100)
+  announcement_message        String?   @db.Text
+  show_announcement           Boolean?  @default(false)
+  announcement_start_date     DateTime? @db.DateTime(0)
+  announcement_end_date       DateTime? @db.DateTime(0)
+}
+
+model tenant_fcm_tokens {
+  s_no        Int      @id @default(autoincrement())
+  tenant_id   Int
+  fcm_token   String   @unique(map: "uk_tenant_fcm_tokens_token") @db.VarChar(512)
+  device_type String?  @db.VarChar(20)
+  device_id   String?  @db.VarChar(255)
+  device_name String?  @db.VarChar(255)
+  is_active   Boolean? @default(true)
+  created_at  DateTime @default(now()) @db.Timestamp(0)
+  updated_at  DateTime @default(now()) @db.Timestamp(0)
+  tenants     tenants  @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_fcm_tokens_tenant")
+
+  @@index([tenant_id], map: "fk_tenant_fcm_tokens_tenant")
+}
+
+model tenant_ticket_comments {
+  s_no           Int                                @id @default(autoincrement())
+  ticket_id      Int
+  sender_type    tenant_ticket_comments_sender_type
+  sender_id      Int
+  message        String?                            @db.Text
+  attachments    Json?
+  is_deleted     Boolean                            @default(false)
+  created_at     DateTime                           @default(now())
+  tenant_tickets tenant_tickets                     @relation(fields: [ticket_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_ttc_ticket")
+
+  @@index([ticket_id], map: "fk_ttc_ticket")
+}
+
+model tenant_tickets {
+  s_no                   Int                      @id @default(autoincrement())
+  organization_id        Int
+  pg_id                  Int
+  tenant_id              Int
+  assigned_to            Int?
+  category               tenant_tickets_category  @default(OTHER)
+  title                  String                   @db.VarChar(255)
+  description            String?                  @db.Text
+  status                 tenant_tickets_status    @default(OPEN)
+  priority               tenant_tickets_priority  @default(MEDIUM)
+  is_deleted             Boolean                  @default(false)
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime                 @default(now())
+  tenant_ticket_comments tenant_ticket_comments[]
+  users                  users?                   @relation(fields: [assigned_to], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_assigned_to")
+  organization           organization             @relation(fields: [organization_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_organization")
+  pg_locations           pg_locations             @relation(fields: [pg_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_pg")
+  tenants                tenants                  @relation(fields: [tenant_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_tenant")
+
+  @@index([assigned_to], map: "fk_tt_assigned_to")
+  @@index([organization_id], map: "fk_tt_organization")
+  @@index([pg_id], map: "fk_tt_pg")
+  @@index([tenant_id], map: "fk_tt_tenant")
+}
+
+model tenant_tokens {
+  s_no               Int       @id @default(autoincrement())
+  tenant_id          Int
+  refresh_token      String    @db.Text
+  token_type         String?   @default("Bearer") @db.VarChar(20)
+  expires_at         DateTime? @db.DateTime(0)
+  refresh_expires_at DateTime? @db.DateTime(0)
+  is_revoked         Boolean   @default(false)
+  device_info        String?   @db.VarChar(255)
+  ip_address         String?   @db.VarChar(45)
+  created_at         DateTime  @default(now()) @db.Timestamp(0)
+  updated_at         DateTime  @default(now()) @db.Timestamp(0)
+  tenants            tenants   @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_tokens_tenant")
+
+  @@index([tenant_id], map: "fk_tenant_tokens_tenant")
+  @@index([is_revoked], map: "idx_tenant_is_revoked")
+  @@index([refresh_token(length: 255)], map: "idx_tenant_refresh_token")
 }
 
 enum permissions_master_action {
@@ -936,4 +1094,35 @@ enum pg_locations_pg_type {
 enum users_gender {
   MALE
   FEMALE
+}
+
+enum subscription_invoices_status {
+  ACTIVE
+  CANCELLED
+  REFUNDED
+}
+
+enum tenant_ticket_comments_sender_type {
+  TENANT
+  OWNER
+}
+
+enum tenant_tickets_category {
+  MAINTENANCE
+  COMPLAINT
+  REQUEST
+  OTHER
+}
+
+enum tenant_tickets_status {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum tenant_tickets_priority {
+  LOW
+  MEDIUM
+  HIGH
 }
