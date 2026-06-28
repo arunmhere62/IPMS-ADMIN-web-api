@@ -24,11 +24,9 @@ jobs:
             if [ "${{ github.ref }}" = "refs/heads/main" ]; then
               DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
               COMPOSE_FILE="docker-compose.yml"
-              NETWORK_NAME="ipms_admin_api"
             elif [ "${{ github.ref }}" = "refs/heads/development" ]; then
               DEPLOY_PATH="${{ secrets.DEPLOY_PATH_DEV }}"
               COMPOSE_FILE="docker-compose.dev.yml"
-              NETWORK_NAME="ipms_admin_api_dev"
             else
               echo "Unsupported branch: ${{ github.ref }}"
               exit 1
@@ -50,9 +48,7 @@ jobs:
             git fetch --all
             git reset --hard origin/${{ github.ref_name }}
 
-            # Clean previous stack to avoid docker network label conflicts
             docker compose -f $COMPOSE_FILE down --remove-orphans || true
-            docker network rm $NETWORK_NAME || true
 
             docker compose -f $COMPOSE_FILE up -d --build
             docker compose -f $COMPOSE_FILE ps

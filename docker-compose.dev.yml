@@ -9,7 +9,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: development
-      PORT: 3001
+      PORT: 3000
       DATABASE_URL: ${DATABASE_URL}
       CONSUMER_DATABASE_URL: ${CONSUMER_DATABASE_URL}
       MANAGEMENT_DATABASE_URL: ${MANAGEMENT_DATABASE_URL}
@@ -40,9 +40,10 @@ services:
       CCAVENUE_CANCEL_URL: ${CCAVENUE_CANCEL_URL}
       ALLOW_TEST_OTP: ${ALLOW_TEST_OTP}
       FORCE_REAL_SMS_IN_DEV: ${FORCE_REAL_SMS_IN_DEV}
-    ports:
-      - "3001:3001"
+    expose:
+      - "3000"
 
 networks:
   default:
-    name: ipms_admin_api_dev
+    name: ipms_mob_api_dev
+    external: true
