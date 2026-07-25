@@ -22,7 +22,7 @@ export class OrganizationsController {
   ) {
     const pageNumber = page ? parseInt(page, 10) : 1;
     const limitNumber = limit ? parseInt(limit, 10) : 10;
-
+    console.log("hellow testing")
     return this.organizationsService.listOrganizations({
       page: pageNumber,
       limit: limitNumber,
