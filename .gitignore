@@ -40,6 +40,9 @@ lerna-debug.log*
 .env.*.local
 
 pg-backend-key.pem
+github_deploy_key
+github_deploy_key.pub
+*.pem
 
 # Prisma
 prisma/migrations

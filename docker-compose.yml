@@ -1,9 +1,8 @@
-version: "3.8"
-
 services:
-  backend:
+  ipgm-admin-api:
     build: .
-    container_name: ipms-admin-api
+    image: ${APP_IMAGE:-ipgm-admin-api}:${APP_TAG:-latest}
+    container_name: ipgm-admin-api
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -44,5 +43,5 @@ services:
 
 networks:
   default:
-    name: ipms_mob_api
     external: true
+    name: ipgm-admin-api-network
