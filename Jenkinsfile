@@ -233,7 +233,7 @@ def prepareEnvFile() {
         return
     }
 
-    def envCredentialId = 'ipgm-admin-api-env-file'
+    def envCredentialId = 'ipgm-admin-api-prod-env-file'
 
     try {
         withCredentials([file(credentialsId: envCredentialId, variable: 'SECRET_ENV_FILE')]) {
