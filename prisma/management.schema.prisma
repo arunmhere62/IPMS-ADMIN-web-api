@@ -66,14 +66,289 @@ model session {
 }
 
 model user {
-  s_no        Int           @id @default(autoincrement())
-  email       String?       @unique @db.VarChar(255)
-  phone       String?       @unique @db.VarChar(32)
-  name        String?       @db.VarChar(255)
-  is_active   Boolean       @default(true)
-  created_at  DateTime      @default(now()) @db.DateTime(0)
-  updated_at  DateTime      @default(now()) @db.DateTime(0)
-  otp_attempt otp_attempt[]
-  otp_request otp_request[]
-  session     session[]
+  s_no                Int                   @id @default(autoincrement())
+  email               String?               @unique @db.VarChar(255)
+  phone               String?               @unique @db.VarChar(32)
+  name                String?               @db.VarChar(255)
+  organization_id     Int?
+  role_id             Int?
+  is_active           Boolean               @default(true)
+  created_at          DateTime              @default(now()) @db.DateTime(0)
+  updated_at          DateTime              @default(now()) @db.DateTime(0)
+  crm_import_batches  crm_import_batches[]
+  crm_lead_activities crm_lead_activities[]
+  crm_leads_assigned  crm_leads[]           @relation("crm_leads_assigned_to")
+  crm_site_visits     crm_site_visits[]
+  crm_subscribers     crm_subscribers[]
+  otp_attempt         otp_attempt[]
+  otp_request         otp_request[]
+  session             session[]
+  organization        organization?         @relation(fields: [organization_id], references: [s_no], onUpdate: NoAction, map: "fk_user_org")
+  role                role?                 @relation(fields: [role_id], references: [s_no], onUpdate: NoAction, map: "fk_user_role")
+
+  @@index([organization_id], map: "idx_user_org")
+  @@index([role_id], map: "idx_user_role")
+}
+
+model organization {
+  s_no        Int        @id @default(autoincrement())
+  name        String     @db.VarChar(150)
+  description String?    @db.Text
+  status      org_status @default(ACTIVE)
+  created_at  DateTime   @default(now()) @db.DateTime(0)
+  updated_at  DateTime   @default(now()) @db.DateTime(0)
+  user        user[]
+
+  @@index([status], map: "idx_org_status")
+}
+
+model role {
+  s_no        Int      @id @default(autoincrement())
+  name        String   @unique(map: "role_name_unique") @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.DateTime(0)
+  updated_at  DateTime @default(now()) @db.DateTime(0)
+  user        user[]
+}
+
+model crm_import_batches {
+  s_no           Int            @id @default(autoincrement())
+  filename       String         @db.VarChar(255)
+  total_rows     Int            @default(0)
+  imported_count Int            @default(0)
+  failed_count   Int            @default(0)
+  failed_rows    String?        @db.LongText
+  uploaded_by    Int
+  created_at     DateTime       @default(now()) @db.DateTime(0)
+  updated_at     DateTime       @default(now()) @db.DateTime(0)
+  crm_contacts   crm_contacts[]
+  user           user           @relation(fields: [uploaded_by], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_crm_import_user")
+
+  @@index([created_at], map: "idx_crm_import_created")
+  @@index([uploaded_by], map: "idx_crm_import_user")
+}
+
+model crm_contacts {
+  s_no               Int                 @id @default(autoincrement())
+  pg_name            String              @db.VarChar(200)
+  owner_name         String?             @db.VarChar(150)
+  designation        String?             @db.VarChar(100)
+  phone              String?             @db.VarChar(20)
+  whatsapp_number    String?             @db.VarChar(20)
+  email              String?             @db.VarChar(150)
+  country_id         Int?
+  state_id           Int?
+  city_id            Int?
+  area               String?             @db.VarChar(150)
+  address            String?             @db.VarChar(500)
+  no_of_rooms        Int?
+  google_maps_url    String?             @db.VarChar(500)
+  google_rating      Decimal?            @db.Decimal(2, 1)
+  website            String?             @db.VarChar(255)
+  tags               String?             @db.Text
+  source             crm_contacts_source @default(MANUAL)
+  status             crm_contacts_status @default(NEW)
+  import_batch_id    Int?
+  notes              String?             @db.Text
+  created_at         DateTime            @default(now()) @db.DateTime(0)
+  updated_at         DateTime            @default(now()) @db.DateTime(0)
+  is_deleted         Boolean             @default(false)
+  deleted_at         DateTime?           @db.DateTime(0)
+  crm_import_batches crm_import_batches? @relation(fields: [import_batch_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_contact_batch")
+  crm_leads          crm_leads?
+  crm_site_visits    crm_site_visits[]
+
+  @@index([import_batch_id], map: "idx_crm_contact_batch")
+  @@index([pg_name], map: "idx_crm_contact_pg_name")
+  @@index([phone], map: "idx_crm_contact_phone")
+  @@index([source], map: "idx_crm_contact_source")
+  @@index([status], map: "idx_crm_contact_status")
+  @@index([city_id], map: "idx_crm_contact_city_id")
+  @@index([country_id], map: "idx_crm_contact_country_id")
+  @@index([state_id], map: "idx_crm_contact_state_id")
+}
+
+model crm_leads {
+  s_no                Int                   @id @default(autoincrement())
+  contact_id          Int                   @unique(map: "crm_leads_contact_id_unique")
+  assigned_to         Int?
+  stage               crm_leads_stage       @default(NEW)
+  priority            crm_leads_priority    @default(MEDIUM)
+  score               Int                   @default(0)
+  expected_value      Decimal?              @db.Decimal(10, 2)
+  expected_close_date DateTime?             @db.Date
+  next_follow_up_date DateTime?             @db.Date
+  last_activity_at    DateTime?             @db.DateTime(0)
+  lost_reason         String?               @db.VarChar(500)
+  converted_at        DateTime?             @db.DateTime(0)
+  tags                String?               @db.Text
+  created_at          DateTime              @default(now()) @db.DateTime(0)
+  updated_at          DateTime              @default(now()) @db.DateTime(0)
+  is_deleted          Boolean               @default(false)
+  deleted_at          DateTime?             @db.DateTime(0)
+  crm_lead_activities crm_lead_activities[]
+  assigned_user       user?                 @relation("crm_leads_assigned_to", fields: [assigned_to], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_crm_lead_assigned")
+  crm_contacts        crm_contacts          @relation(fields: [contact_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_crm_lead_contact")
+  crm_site_visits     crm_site_visits[]
+  crm_subscribers     crm_subscribers?
+
+  @@index([assigned_to], map: "idx_crm_lead_assigned")
+  @@index([contact_id], map: "idx_crm_lead_contact")
+  @@index([next_follow_up_date], map: "idx_crm_lead_follow_up")
+  @@index([last_activity_at], map: "idx_crm_lead_last_activity")
+  @@index([priority], map: "idx_crm_lead_priority")
+  @@index([score], map: "idx_crm_lead_score")
+  @@index([stage], map: "idx_crm_lead_stage")
+}
+
+model crm_lead_activities {
+  s_no             Int                      @id @default(autoincrement())
+  lead_id          Int
+  user_id          Int?
+  type             crm_lead_activities_type @default(NOTE)
+  title            String                   @db.VarChar(255)
+  description      String?                  @db.Text
+  outcome          String?                  @db.VarChar(255)
+  duration_minutes Int?
+  scheduled_at     DateTime?                @db.DateTime(0)
+  completed_at     DateTime?                @db.DateTime(0)
+  created_at       DateTime                 @default(now()) @db.DateTime(0)
+  updated_at       DateTime                 @default(now()) @db.DateTime(0)
+  is_deleted       Boolean                  @default(false)
+  crm_leads        crm_leads                @relation(fields: [lead_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_crm_activity_lead")
+  user             user?                    @relation(fields: [user_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_crm_activity_user")
+
+  @@index([completed_at], map: "idx_crm_activity_completed")
+  @@index([lead_id], map: "idx_crm_activity_lead")
+  @@index([scheduled_at], map: "idx_crm_activity_scheduled")
+  @@index([type], map: "idx_crm_activity_type")
+  @@index([user_id], map: "idx_crm_activity_user")
+}
+
+model crm_subscribers {
+  s_no                Int       @id @default(autoincrement())
+  lead_id             Int       @unique(map: "crm_subscribers_lead_id_unique")
+  user_id             Int?
+  subscription_id     Int?
+  new_organization_id Int?
+  conversion_date     DateTime  @default(now()) @db.DateTime(0)
+  plan_name           String?   @db.VarChar(100)
+  billing_cycle       String?   @db.VarChar(50)
+  notes               String?   @db.Text
+  created_at          DateTime  @default(now()) @db.DateTime(0)
+  updated_at          DateTime  @default(now()) @db.DateTime(0)
+  is_deleted          Boolean   @default(false)
+  crm_leads           crm_leads @relation(fields: [lead_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_crm_subscriber_lead")
+  user                user?     @relation(fields: [user_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_crm_subscriber_user")
+
+  @@index([conversion_date], map: "idx_crm_subscriber_date")
+  @@index([lead_id], map: "idx_crm_subscriber_lead")
+  @@index([new_organization_id], map: "idx_crm_subscriber_new_org")
+  @@index([subscription_id], map: "idx_crm_subscriber_subscription")
+  @@index([user_id], map: "idx_crm_subscriber_user")
+}
+
+model crm_site_visits {
+  s_no             Int                    @id @default(autoincrement())
+  contact_id       Int
+  lead_id          Int?
+  assigned_to      Int
+  visit_date       DateTime               @db.DateTime(0)
+  status           crm_site_visits_status @default(SCHEDULED)
+  visit_type       crm_site_visits_type   @default(ONBOARDING)
+  purpose          String?                @db.VarChar(500)
+  feedback         String?                @db.Text
+  rating           Int?
+  no_of_rooms_seen Int?
+  no_of_beds_seen  Int?
+  photos           String?                @db.LongText
+  competitor_info  String?                @db.Text
+  outcome          String?                @db.VarChar(255)
+  next_action      String?                @db.VarChar(255)
+  completed_at     DateTime?              @db.DateTime(0)
+  cancelled_at     DateTime?              @db.DateTime(0)
+  cancel_reason    String?                @db.VarChar(500)
+  created_at       DateTime               @default(now()) @db.DateTime(0)
+  updated_at       DateTime               @default(now()) @db.DateTime(0)
+  is_deleted       Boolean                @default(false)
+  crm_contacts     crm_contacts           @relation(fields: [contact_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_crm_visit_contact")
+  crm_leads        crm_leads?             @relation(fields: [lead_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_visit_lead")
+  user             user                   @relation(fields: [assigned_to], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_crm_visit_user")
+
+  @@index([contact_id], map: "idx_crm_visit_contact")
+  @@index([visit_date], map: "idx_crm_visit_date")
+  @@index([lead_id], map: "idx_crm_visit_lead")
+  @@index([status], map: "idx_crm_visit_status")
+  @@index([visit_type], map: "idx_crm_visit_type")
+  @@index([assigned_to], map: "idx_crm_visit_user")
+}
+
+enum org_status {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum crm_contacts_source {
+  GOOGLE
+  EXCEL
+  MANUAL
+  REFERRAL
+  WEBSITE
+  OTHER
+}
+
+enum crm_contacts_status {
+  NEW
+  IMPORTED
+  CONVERTED_TO_LEAD
+  CONVERTED_TO_SUBSCRIBER
+  REJECTED
+  DUPLICATE
+}
+
+enum crm_leads_stage {
+  NEW
+  CONTACTED
+  INTERESTED
+  DEMO_SCHEDULED
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum crm_leads_priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum crm_lead_activities_type {
+  CALL
+  EMAIL
+  WHATSAPP
+  MEETING
+  DEMO
+  NOTE
+  FOLLOW_UP
+  SITE_VISIT
+}
+
+enum crm_site_visits_status {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum crm_site_visits_type {
+  PRE_SALES
+  ONBOARDING
+  DEMO
+  VERIFICATION
+  FOLLOW_UP
+  COMPETITOR_ANALYSIS
 }

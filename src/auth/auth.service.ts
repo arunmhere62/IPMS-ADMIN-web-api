@@ -163,10 +163,56 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
+    // Ensure organization and role are set for this user
+    let updatedUser = user;
+    const defaultOrgName = process.env.MGMT_DEFAULT_ORG_NAME ?? 'Indian PG Management';
+    const [superAdminRole, salesManagerRole, salesRepRole] = await Promise.all([
+      this.managementPrisma.role.findUnique({ where: { name: 'SUPER_ADMIN' } }),
+      this.managementPrisma.role.findUnique({ where: { name: 'SALES_MANAGER' } }),
+      this.managementPrisma.role.findUnique({ where: { name: 'SALES_REP' } }),
+    ]);
+
+    // Ensure default organization exists
+    let defaultOrg = await this.managementPrisma.organization.findFirst({ where: { name: defaultOrgName } });
+    if (!defaultOrg) {
+      defaultOrg = await this.managementPrisma.organization.create({
+        data: { name: defaultOrgName, status: 'ACTIVE' as any },
+      });
+    }
+
+    // If user has no org/role, assign sensible defaults
+    if (!user.organization_id || !user.role_id) {
+      let roleIdToAssign = user.role_id ?? undefined;
+      if (!roleIdToAssign) {
+        // First super admin bootstrap: if no user has SUPER_ADMIN, make this user SUPER_ADMIN, else SALES_REP
+        const superAdminId = superAdminRole?.s_no;
+        const countSuperAdmins = superAdminId
+          ? await this.managementPrisma.user.count({ where: { role_id: superAdminId } })
+          : 0;
+        roleIdToAssign = countSuperAdmins === 0 ? superAdminId ?? salesRepRole?.s_no ?? undefined : salesRepRole?.s_no ?? undefined;
+      }
+
+      updatedUser = await this.managementPrisma.user.update({
+        where: { s_no: user.s_no },
+        data: {
+          organization_id: user.organization_id ?? defaultOrg.s_no,
+          role_id: roleIdToAssign,
+        },
+      });
+    }
+
+    // Re-fetch with relations for response
+    const fullUser = await this.managementPrisma.user.findUnique({
+      where: { s_no: updatedUser.s_no },
+      include: { organization: true, role: true },
+    });
+
     const accessToken = await this.jwtService.signAsync({
-      sub: user.s_no,
-      phone: user.phone,
-      email: user.email,
+      sub: fullUser?.s_no,
+      phone: fullUser?.phone,
+      email: fullUser?.email,
+      role: fullUser?.role?.name,
+      organization_id: fullUser?.organization_id,
     });
 
     const refreshToken = randomBytes(32).toString('hex');
@@ -189,10 +235,12 @@ export class AuthService {
     return ResponseUtil.success(
       {
         user: {
-          s_no: user.s_no,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
+          s_no: fullUser?.s_no,
+          name: fullUser?.name,
+          email: fullUser?.email,
+          phone: fullUser?.phone,
+          role: fullUser?.role?.name,
+          organization: fullUser?.organization ? { s_no: fullUser.organization.s_no, name: fullUser.organization.name } : null,
         },
         accessToken,
         refreshToken,

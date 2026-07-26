@@ -12,6 +12,8 @@ import { AuthModule } from './auth/auth.module';
 import { LegalDocumentsModule } from './legal-documents/legal-documents.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { ConfigModule } from '@nestjs/config';
+import { CrmModule } from './crm/crm.module';
+import { LocationModule } from './location/location.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { ConfigModule } from '@nestjs/config';
     PermissionsModule,
     RolesModule,
     RolePermissionsModule,
+    CrmModule,
+    LocationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
