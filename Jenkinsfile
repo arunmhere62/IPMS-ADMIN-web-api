@@ -120,6 +120,22 @@ pipeline {
             }
         }
 
+        stage('Capture Startup Logs') {
+            when {
+                allOf {
+                    expression { params.ACTION != 'Rollback' }
+                    expression { env.DEPLOY_SUCCESSFUL == 'true' }
+                }
+            }
+            steps {
+                script {
+                    echo '--- Container startup logs ---'
+                    sh "docker logs --tail 50 ${env.CONTAINER_NAME} 2>&1 || true"
+                    echo '--- End startup logs ---'
+                }
+            }
+        }
+
         stage('Deployment Summary') {
             when {
                 allOf {
@@ -167,7 +183,10 @@ pipeline {
                 echo 'RESULT: FAILURE'
                 echo "Image: ${env.IMAGE_FQN ?: 'unknown'}"
                 echo '============================================'
-                if (params.ACTION != 'Rollback' && env.DEPLOY_HAPPENED == 'true' && env.DEPLOY_SUCCESSFUL != 'true') {
+                if (params.ACTION != 'Rollback' && env.DEPLOY_HAPPENED == 'true') {
+                    echo '--- Container logs on failure ---'
+                    sh "docker logs --tail 100 ${env.CONTAINER_NAME} 2>&1 || true"
+                    echo '--- End failure logs ---'
                     echo 'Deployment did not reach healthy state. Attempting automatic rollback...'
                     rollbackDeployment()
                 }

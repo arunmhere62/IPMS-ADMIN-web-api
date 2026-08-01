@@ -1,53 +1,70 @@
 import 'tsconfig-paths/register';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { PerformanceInterceptor } from './common/interceptors/performance.interceptor';
+import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { registerProcessErrorHandlers, registerGracefulShutdown } from './common/utils/process-error-handler';
+import { validateEnvironment } from './common/utils/env-validation';
+import { AppLogger } from './common/utils/app-logger';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const logger = new Logger('Bootstrap');
+
+  registerProcessErrorHandlers();
+
+  const envCheck = validateEnvironment();
+  if (!envCheck.valid) {
+    logger.error('FATAL: Missing required environment variables. Server cannot start.');
+    logger.error(`Missing: ${envCheck.missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: false,
+    logger: AppLogger.getInstance(),
+  });
 
   app.enableShutdownHooks();
 
-  // Payload size limit for image uploads (50MB - images are compressed on frontend)
   app.use(bodyParser.json({ limit: '50mb' }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
-  // Global prefix
   app.setGlobalPrefix('api/web/v1');
 
-  // Enable CORS - Allow all origins for development
   app.enableCors({
-    origin: true,  // Allow all origins
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
     exposedHeaders: ['Authorization'],
   });
 
-  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       transform: true,
       forbidNonWhitelisted: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
 
-  // Global exception filter - handles all errors consistently
   app.useGlobalFilters(new GlobalExceptionFilter());
 
-  // Global performance interceptor - enables API/DB timings
-  app.useGlobalInterceptors(new PerformanceInterceptor());
+  app.useGlobalInterceptors(
+    new LoggingInterceptor(),
+    new TimeoutInterceptor(),
+    new PerformanceInterceptor(),
+    new TransformInterceptor(),
+  );
 
-  // Global response interceptor - wraps all successful responses
-  app.useGlobalInterceptors(new TransformInterceptor());
-
-  // Swagger configuration
   const config = new DocumentBuilder()
     .setTitle('Web API')
     .setDescription('Web API - Health endpoints')
@@ -66,11 +83,22 @@ async function bootstrap() {
   });
 
   const port = process.env.PORT || 5002;
+
+  registerGracefulShutdown(async () => {
+    logger.log('Closing HTTP server...');
+    await app.close();
+    logger.log('HTTP server closed.');
+  });
+
   await app.listen(port);
-  
-  console.log(`🚀 Application is running on: http://localhost:${port}`);
-  console.log(`📚 Swagger documentation: http://localhost:${port}/api/docs`);
-  console.log(`⚡ Ready for multiple concurrent requests`);
+
+  logger.log(`Application is running on: http://localhost:${port}`);
+  logger.log(`Swagger documentation: http://localhost:${port}/api/docs`);
+  logger.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  const logger = new Logger('Bootstrap');
+  logger.error(`Failed to start application: ${err?.message}`, err?.stack);
+  process.exit(1);
+});

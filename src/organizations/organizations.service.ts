@@ -6,6 +6,10 @@ import { Prisma } from '@prisma/client-consumer';
 interface ListOrganizationsParams {
   page: number;
   limit: number;
+  search?: string;
+  status?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
 }
 
 @Injectable()
@@ -13,12 +17,27 @@ export class OrganizationsService {
   constructor(private readonly consumerPrisma: ConsumerPrismaService) {}
 
   async listOrganizations(params: ListOrganizationsParams) {
-    const { page, limit } = params;
+    const { page, limit, search, status, sortBy, sortOrder } = params;
     const skip = (page - 1) * limit;
 
     const whereOrganizations: any = {
       is_deleted: false,
     };
+
+    if (search) {
+      whereOrganizations.OR = [
+        { name: { contains: search } },
+        { description: { contains: search } },
+      ];
+    }
+
+    if (status) {
+      whereOrganizations.status = status;
+    }
+
+    const allowedSortColumns = ['name', 'status', 'created_at', 'updated_at'];
+    const orderByColumn = allowedSortColumns.includes(sortBy ?? '') ? sortBy! : 'created_at';
+    const orderByDir = sortOrder === 'asc' ? 'asc' : 'desc';
 
     const [total, organizations] = await Promise.all([
       this.consumerPrisma.organization.count({ where: whereOrganizations }),
@@ -26,7 +45,7 @@ export class OrganizationsService {
         where: whereOrganizations,
         skip,
         take: limit,
-        orderBy: { created_at: 'desc' },
+        orderBy: { [orderByColumn]: orderByDir },
         select: {
           s_no: true,
           name: true,
@@ -268,6 +287,145 @@ export class OrganizationsService {
         pg_locations: pgLocations,
       },
       'Organization fetched successfully',
+    );
+  }
+
+  async getPgDetails(orgId: number, pgId: number) {
+    const pg = await this.consumerPrisma.pg_locations.findFirst({
+      where: {
+        s_no: pgId,
+        organization_id: orgId,
+        is_deleted: false,
+      },
+      select: {
+        s_no: true,
+        location_name: true,
+        address: true,
+        pincode: true,
+        status: true,
+        pg_type: true,
+        rent_cycle_type: true,
+        rent_cycle_start: true,
+        rent_cycle_end: true,
+        created_at: true,
+        updated_at: true,
+        organization: {
+          select: {
+            s_no: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!pg) {
+      throw new NotFoundException('PG location not found');
+    }
+
+    const [rooms, tenants, employees] = await Promise.all([
+      this.consumerPrisma.rooms.findMany({
+        where: { pg_id: pgId, is_deleted: false },
+        select: {
+          s_no: true,
+          room_no: true,
+          created_at: true,
+          updated_at: true,
+          beds: {
+            where: { is_deleted: false },
+            select: {
+              s_no: true,
+              bed_no: true,
+              bed_price: true,
+              created_at: true,
+              updated_at: true,
+            },
+          },
+        },
+        orderBy: { s_no: 'asc' },
+      }),
+      this.consumerPrisma.tenants.findMany({
+        where: { pg_id: pgId, is_deleted: false },
+        select: {
+          s_no: true,
+          tenant_id: true,
+          name: true,
+          phone_no: true,
+          email: true,
+          status: true,
+          check_in_date: true,
+          check_out_date: true,
+          room_id: true,
+          bed_id: true,
+          rooms: {
+            select: { room_no: true },
+          },
+          beds: {
+            select: { bed_no: true },
+          },
+        },
+        orderBy: { s_no: 'desc' },
+      }),
+      this.consumerPrisma.pg_users.findMany({
+        where: { pg_id: pgId, is_active: true },
+        select: {
+          s_no: true,
+          monthly_salary_amount: true,
+          created_at: true,
+          users: {
+            select: {
+              s_no: true,
+              name: true,
+              email: true,
+              phone: true,
+              status: true,
+            },
+          },
+        },
+        orderBy: { s_no: 'asc' },
+      }),
+    ]);
+
+    const roomsWithCounts = rooms.map((room) => ({
+      s_no: room.s_no,
+      room_no: room.room_no,
+      beds_count: room.beds.length,
+      beds: room.beds,
+      created_at: room.created_at,
+      updated_at: room.updated_at,
+    }));
+
+    const allBeds = rooms.flatMap((room) =>
+      room.beds.map((bed) => ({
+        ...bed,
+        room_no: room.room_no,
+        room_id: room.s_no,
+      })),
+    );
+
+    const employeesList = employees.map((e) => ({
+      s_no: e.s_no,
+      user_id: e.users.s_no,
+      name: e.users.name,
+      email: e.users.email,
+      phone: e.users.phone,
+      status: e.users.status,
+      monthly_salary_amount: e.monthly_salary_amount,
+      created_at: e.created_at,
+    }));
+
+    return ResponseUtil.success(
+      {
+        ...pg,
+        rooms_count: rooms.length,
+        beds_count: allBeds.length,
+        tenants_count: tenants.length,
+        employees_count: employees.length,
+        rooms: roomsWithCounts,
+        beds: allBeds,
+        tenants,
+        employees: employeesList,
+      },
+      'PG details fetched successfully',
     );
   }
 }

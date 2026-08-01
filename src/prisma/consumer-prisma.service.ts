@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client-consumer';
 import { addDbTiming } from '../common/utils/performance-context';
 
@@ -8,6 +8,9 @@ const globalForConsumerPrisma = global as unknown as {
 
 @Injectable()
 export class ConsumerPrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ConsumerPrismaService.name);
+  private isConnected = false;
+
   constructor() {
     const existing = globalForConsumerPrisma.consumerPrisma;
     if (existing) {
@@ -20,16 +23,29 @@ export class ConsumerPrismaService extends PrismaClient implements OnModuleInit,
           url: process.env.DATABASE_CONSUMER_URL,
         },
       },
-      log: ['query', 'info', 'warn', 'error'],
+      log: [
+        { emit: 'event', level: 'error' },
+        { emit: 'event', level: 'warn' },
+      ],
     });
 
     this.$use(async (params, next) => {
       const start = process.hrtime.bigint();
-      const result = await next(params);
-      const end = process.hrtime.bigint();
-      const ms = Number(end - start) / 1_000_000;
-      addDbTiming(ms);
-      return result;
+      try {
+        const result = await next(params);
+        const end = process.hrtime.bigint();
+        const ms = Number(end - start) / 1_000_000;
+        addDbTiming(ms);
+        return result;
+      } catch (error: any) {
+        const end = process.hrtime.bigint();
+        const ms = Number(end - start) / 1_000_000;
+        addDbTiming(ms);
+        this.logger.error(
+          `DB query failed (${ms.toFixed(0)}ms): ${params.model}.${params.action} - ${error?.code || error?.message}`,
+        );
+        throw error;
+      }
     });
 
     if (process.env.NODE_ENV !== 'production') {
@@ -42,10 +58,33 @@ export class ConsumerPrismaService extends PrismaClient implements OnModuleInit,
       throw new Error('DATABASE_CONSUMER_URL is not set');
     }
 
-    await this.$connect();
+    await this.connectWithRetry();
   }
 
   async onModuleDestroy() {
-    await this.$disconnect();
+    if (this.isConnected) {
+      await this.$disconnect();
+      this.isConnected = false;
+      this.logger.log('Database disconnected');
+    }
+  }
+
+  private async connectWithRetry(maxRetries = 5, delayMs = 3000): Promise<void> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.$connect();
+        this.isConnected = true;
+        this.logger.log(`Database connected (attempt ${attempt}/${maxRetries})`);
+        return;
+      } catch (error: any) {
+        this.logger.error(
+          `DB connection attempt ${attempt}/${maxRetries} failed: ${error?.message}`,
+        );
+        if (attempt === maxRetries) {
+          throw new Error(`Failed to connect to database after ${maxRetries} attempts`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
   }
 }
