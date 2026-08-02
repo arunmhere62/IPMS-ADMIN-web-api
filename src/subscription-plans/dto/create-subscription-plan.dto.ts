@@ -98,12 +98,6 @@ export class CreateSubscriptionPlanDto {
   @Min(0)
   max_sms_per_month?: number;
 
-  @ApiPropertyOptional({ example: 1000 })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  max_whatsapp_per_month?: number;
-
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()

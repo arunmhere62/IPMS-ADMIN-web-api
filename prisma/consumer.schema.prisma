@@ -38,6 +38,33 @@ model advance_payments {
   @@index([tenant_id], map: "tenantId")
 }
 
+model app_settings {
+  s_no                        Int       @id @default(autoincrement())
+  is_maintenance_mode         Boolean   @default(false)
+  maintenance_message         String?   @db.VarChar(500)
+  is_registration_open        Boolean   @default(true)
+  force_update_android        Boolean   @default(false)
+  force_update_ios            Boolean   @default(false)
+  android_store_url           String?   @db.VarChar(500)
+  ios_store_url               String?   @db.VarChar(500)
+  max_login_attempts          Int       @default(5)
+  otp_expiry_seconds          Int       @default(300)
+  otp_resend_cooldown_seconds Int       @default(60)
+  created_at                  DateTime  @default(now()) @db.Timestamp(0)
+  updated_at                  DateTime  @default(now()) @db.Timestamp(0)
+  updated_by                  Int?
+  current_version_android     String?   @db.VarChar(20)
+  current_version_ios         String?   @db.VarChar(20)
+  minimum_version_android     String?   @db.VarChar(20)
+  minimum_version_ios         String?   @db.VarChar(20)
+  payment_gateway_enabled     Boolean?  @default(false)
+  announcement_title          String?   @db.VarChar(100)
+  announcement_message        String?   @db.Text
+  show_announcement           Boolean?  @default(false)
+  announcement_start_date     DateTime? @db.DateTime(0)
+  announcement_end_date       DateTime? @db.DateTime(0)
+}
+
 model beds {
   s_no               Int                  @id @default(autoincrement())
   bed_no             String               @db.VarChar(50)
@@ -102,6 +129,54 @@ model current_bills {
 
   @@index([pg_id], map: "fk_tenant_bills_pg")
   @@index([tenant_id], map: "fk_tenant_bills_tenant")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model electricity_bill_items {
+  s_no                Int               @id @default(autoincrement())
+  electricity_bill_id Int
+  tenant_id           Int
+  share_amount        Decimal           @db.Decimal(10, 2)
+  share_percentage    Decimal           @db.Decimal(5, 2)
+  paid_amount         Decimal?          @default(0.00) @db.Decimal(10, 2)
+  status              String?           @default("PENDING") @db.VarChar(20)
+  allocation_basis    String?           @default("EQUAL") @db.VarChar(20)
+  billing_days        Int?
+  payment_date        DateTime?         @db.Timestamp(0)
+  payment_method      String?           @db.VarChar(50)
+  created_at          DateTime?         @default(now()) @db.Timestamp(0)
+  updated_at          DateTime?         @default(now()) @db.Timestamp(0)
+  electricity_bills   electricity_bills @relation(fields: [electricity_bill_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bill_items_ibfk_1")
+  tenants             tenants           @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bill_items_ibfk_2")
+
+  @@unique([electricity_bill_id, tenant_id], map: "uk_bill_tenant")
+  @@index([electricity_bill_id], map: "idx_ebi_bill")
+  @@index([status], map: "idx_ebi_status")
+  @@index([tenant_id], map: "idx_ebi_tenant")
+}
+
+model electricity_bills {
+  s_no                   Int                      @id @default(autoincrement())
+  pg_id                  Int
+  room_id                Int
+  bill_period_start      DateTime                 @db.Date
+  bill_period_end        DateTime                 @db.Date
+  total_amount           Decimal                  @db.Decimal(10, 2)
+  units_consumed         Decimal?                 @db.Decimal(10, 2)
+  rate_per_unit          Decimal?                 @db.Decimal(10, 2)
+  meter_reading_start    Decimal?                 @db.Decimal(10, 2)
+  meter_reading_end      Decimal?                 @db.Decimal(10, 2)
+  status                 String?                  @default("PENDING") @db.VarChar(20)
+  due_date               DateTime?                @db.Date
+  created_at             DateTime?                @default(now()) @db.Timestamp(0)
+  updated_at             DateTime?                @default(now()) @db.Timestamp(0)
+  electricity_bill_items electricity_bill_items[]
+  pg_locations           pg_locations             @relation(fields: [pg_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bills_ibfk_1")
+  rooms                  rooms                    @relation(fields: [room_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bills_ibfk_2")
+
+  @@index([bill_period_start, bill_period_end], map: "idx_eb_period")
+  @@index([pg_id], map: "idx_eb_pg")
+  @@index([room_id], map: "idx_eb_room")
 }
 
 model expenses {
@@ -611,6 +686,21 @@ model tenant_allocations {
   @@index([tenant_id], map: "idx_tenant_allocations_tenant")
 }
 
+model tenant_fcm_tokens {
+  s_no        Int      @id @default(autoincrement())
+  tenant_id   Int
+  fcm_token   String   @unique(map: "uk_tenant_fcm_tokens_token") @db.VarChar(512)
+  device_type String?  @db.VarChar(20)
+  device_id   String?  @db.VarChar(255)
+  device_name String?  @db.VarChar(255)
+  is_active   Boolean? @default(true)
+  created_at  DateTime @default(now()) @db.Timestamp(0)
+  updated_at  DateTime @default(now()) @db.Timestamp(0)
+  tenants     tenants  @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_fcm_tokens_tenant")
+
+  @@index([tenant_id], map: "fk_tenant_fcm_tokens_tenant")
+}
+
 model tenant_rent_cycles {
   s_no          Int             @id @default(autoincrement())
   tenant_id     Int
@@ -627,6 +717,65 @@ model tenant_rent_cycles {
   @@index([cycle_end], map: "idx_tenant_rent_cycles_end")
   @@index([cycle_start], map: "idx_tenant_rent_cycles_start")
   @@index([tenant_id], map: "idx_tenant_rent_cycles_tenant")
+}
+
+model tenant_ticket_comments {
+  s_no           Int                                @id @default(autoincrement())
+  ticket_id      Int
+  sender_type    tenant_ticket_comments_sender_type
+  sender_id      Int
+  message        String?                            @db.Text
+  attachments    Json?
+  is_deleted     Boolean                            @default(false)
+  created_at     DateTime                           @default(now())
+  tenant_tickets tenant_tickets                     @relation(fields: [ticket_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_ttc_ticket")
+
+  @@index([ticket_id], map: "fk_ttc_ticket")
+}
+
+model tenant_tickets {
+  s_no                   Int                      @id @default(autoincrement())
+  organization_id        Int
+  pg_id                  Int
+  tenant_id              Int
+  assigned_to            Int?
+  category               tenant_tickets_category  @default(OTHER)
+  title                  String                   @db.VarChar(255)
+  description            String?                  @db.Text
+  status                 tenant_tickets_status    @default(OPEN)
+  priority               tenant_tickets_priority  @default(MEDIUM)
+  is_deleted             Boolean                  @default(false)
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime                 @default(now())
+  tenant_ticket_comments tenant_ticket_comments[]
+  users                  users?                   @relation(fields: [assigned_to], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_assigned_to")
+  organization           organization             @relation(fields: [organization_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_organization")
+  pg_locations           pg_locations             @relation(fields: [pg_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_pg")
+  tenants                tenants                  @relation(fields: [tenant_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_tenant")
+
+  @@index([assigned_to], map: "fk_tt_assigned_to")
+  @@index([organization_id], map: "fk_tt_organization")
+  @@index([pg_id], map: "fk_tt_pg")
+  @@index([tenant_id], map: "fk_tt_tenant")
+}
+
+model tenant_tokens {
+  s_no               Int       @id @default(autoincrement())
+  tenant_id          Int
+  refresh_token      String    @db.Text
+  token_type         String?   @default("Bearer") @db.VarChar(20)
+  expires_at         DateTime? @db.DateTime(0)
+  refresh_expires_at DateTime? @db.DateTime(0)
+  is_revoked         Boolean   @default(false)
+  device_info        String?   @db.VarChar(255)
+  ip_address         String?   @db.VarChar(45)
+  created_at         DateTime  @default(now()) @db.Timestamp(0)
+  updated_at         DateTime  @default(now()) @db.Timestamp(0)
+  tenants            tenants   @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_tokens_tenant")
+
+  @@index([tenant_id], map: "fk_tenant_tokens_tenant")
+  @@index([is_revoked], map: "idx_tenant_is_revoked")
+  @@index([refresh_token(length: 255)], map: "idx_tenant_refresh_token")
 }
 
 model tenants {
@@ -867,139 +1016,28 @@ model visitors {
   @@index([pg_id], map: "pg_location_id")
 }
 
-model app_settings {
-  s_no                        Int       @id @default(autoincrement())
-  is_maintenance_mode         Boolean   @default(false)
-  maintenance_message         String?   @db.VarChar(500)
-  is_registration_open        Boolean   @default(true)
-  force_update_android        Boolean   @default(false)
-  force_update_ios            Boolean   @default(false)
-  android_store_url           String?   @db.VarChar(500)
-  ios_store_url               String?   @db.VarChar(500)
-  max_login_attempts          Int       @default(5)
-  otp_expiry_seconds          Int       @default(300)
-  otp_resend_cooldown_seconds Int       @default(60)
-  created_at                  DateTime  @default(now()) @db.Timestamp(0)
-  updated_at                  DateTime  @default(now()) @db.Timestamp(0)
-  updated_by                  Int?
-  current_version_android     String?   @db.VarChar(20)
-  current_version_ios         String?   @db.VarChar(20)
-  minimum_version_android     String?   @db.VarChar(20)
-  minimum_version_ios         String?   @db.VarChar(20)
-  payment_gateway_enabled     Boolean?  @default(false)
-  announcement_title          String?   @db.VarChar(100)
-  announcement_message        String?   @db.Text
-  show_announcement           Boolean?  @default(false)
-  announcement_start_date     DateTime? @db.DateTime(0)
-  announcement_end_date       DateTime? @db.DateTime(0)
-}
-
-model tenant_fcm_tokens {
-  s_no        Int      @id @default(autoincrement())
-  tenant_id   Int
-  fcm_token   String   @unique(map: "uk_tenant_fcm_tokens_token") @db.VarChar(512)
-  device_type String?  @db.VarChar(20)
-  device_id   String?  @db.VarChar(255)
-  device_name String?  @db.VarChar(255)
-  is_active   Boolean? @default(true)
-  created_at  DateTime @default(now()) @db.Timestamp(0)
-  updated_at  DateTime @default(now()) @db.Timestamp(0)
-  tenants     tenants  @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_fcm_tokens_tenant")
-
-  @@index([tenant_id], map: "fk_tenant_fcm_tokens_tenant")
-}
-
-model tenant_ticket_comments {
-  s_no           Int                                @id @default(autoincrement())
-  ticket_id      Int
-  sender_type    tenant_ticket_comments_sender_type
-  sender_id      Int
-  message        String?                            @db.Text
-  attachments    Json?
-  is_deleted     Boolean                            @default(false)
-  created_at     DateTime                           @default(now())
-  tenant_tickets tenant_tickets                     @relation(fields: [ticket_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_ttc_ticket")
-
-  @@index([ticket_id], map: "fk_ttc_ticket")
-}
-
-model tenant_tickets {
-  s_no                   Int                      @id @default(autoincrement())
-  organization_id        Int
-  pg_id                  Int
-  tenant_id              Int
-  assigned_to            Int?
-  category               tenant_tickets_category  @default(OTHER)
-  title                  String                   @db.VarChar(255)
-  description            String?                  @db.Text
-  status                 tenant_tickets_status    @default(OPEN)
-  priority               tenant_tickets_priority  @default(MEDIUM)
-  is_deleted             Boolean                  @default(false)
-  created_at             DateTime                 @default(now())
-  updated_at             DateTime                 @default(now())
-  tenant_ticket_comments tenant_ticket_comments[]
-  users                  users?                   @relation(fields: [assigned_to], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_assigned_to")
-  organization           organization             @relation(fields: [organization_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_organization")
-  pg_locations           pg_locations             @relation(fields: [pg_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_pg")
-  tenants                tenants                  @relation(fields: [tenant_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_tt_tenant")
-
-  @@index([assigned_to], map: "fk_tt_assigned_to")
-  @@index([organization_id], map: "fk_tt_organization")
-  @@index([pg_id], map: "fk_tt_pg")
-  @@index([tenant_id], map: "fk_tt_tenant")
-}
-
-model tenant_tokens {
-  s_no               Int       @id @default(autoincrement())
-  tenant_id          Int
-  refresh_token      String    @db.Text
-  token_type         String?   @default("Bearer") @db.VarChar(20)
-  expires_at         DateTime? @db.DateTime(0)
-  refresh_expires_at DateTime? @db.DateTime(0)
-  is_revoked         Boolean   @default(false)
-  device_info        String?   @db.VarChar(255)
-  ip_address         String?   @db.VarChar(45)
-  created_at         DateTime  @default(now()) @db.Timestamp(0)
-  updated_at         DateTime  @default(now()) @db.Timestamp(0)
-  tenants            tenants   @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_tenant_tokens_tenant")
-
-  @@index([tenant_id], map: "fk_tenant_tokens_tenant")
-  @@index([is_revoked], map: "idx_tenant_is_revoked")
-  @@index([refresh_token(length: 255)], map: "idx_tenant_refresh_token")
-}
-
-model whatsapp_templates {
-  s_no               Int                        @id @default(autoincrement())
-  name               String                     @unique(map: "name") @db.VarChar(100)
-  display_name       String                     @db.VarChar(200)
-  meta_template_name String?                    @db.VarChar(200)
-  body               String                     @db.Text
-  variables          Json?
-  category           whatsapp_template_category @default(UTILITY)
-  status             whatsapp_template_status   @default(DRAFT)
-  language           String                     @default("en") @db.VarChar(10)
-  created_at         DateTime                   @default(now()) @db.Timestamp(0)
-  updated_at         DateTime                   @default(now()) @db.Timestamp(0)
-  is_deleted         Boolean                    @default(false)
-  whatsapp_messages  whatsapp_messages[]
-}
-
 model whatsapp_messages {
-  s_no            Int                     @id @default(autoincrement())
-  phone           String                  @db.VarChar(15)
-  message         String?                 @db.Text
-  template_id     Int?
-  mode            whatsapp_message_mode
-  status          whatsapp_message_status @default(PENDING)
-  provider_msg_id String?                 @db.VarChar(255)
-  sent_by         Int
-  entity_type     String?                 @db.VarChar(50)
-  entity_id       Int?
-  error_message   String?                 @db.Text
-  created_at      DateTime                @default(now()) @db.Timestamp(0)
-  updated_at      DateTime                @default(now()) @db.Timestamp(0)
-  template        whatsapp_templates?     @relation(fields: [template_id], references: [s_no], onUpdate: NoAction, map: "fk_wa_msg_template")
-  user            users                   @relation(fields: [sent_by], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_wa_msg_user")
+  s_no               Int                       @id @default(autoincrement())
+  phone              String                    @db.VarChar(15)
+  to_email           String?                   @db.VarChar(255)
+  subject            String?                   @db.VarChar(255)
+  message            String?                   @db.Text
+  rendered_message   String?                   @db.Text
+  variables          Json?
+  template_id        Int?
+  channel            whatsapp_messages_channel @default(WHATSAPP)
+  provider           String?                   @db.VarChar(50)
+  mode               whatsapp_messages_mode
+  status             whatsapp_messages_status  @default(PENDING)
+  provider_msg_id    String?                   @db.VarChar(255)
+  sent_by            Int
+  entity_type        String?                   @db.VarChar(50)
+  entity_id          Int?
+  error_message      String?                   @db.Text
+  created_at         DateTime                  @default(now()) @db.Timestamp(0)
+  updated_at         DateTime                  @default(now()) @db.Timestamp(0)
+  whatsapp_templates whatsapp_templates?       @relation(fields: [template_id], references: [s_no], onDelete: NoAction, onUpdate: NoAction, map: "fk_wa_msg_template")
+  users              users                     @relation(fields: [sent_by], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "fk_wa_msg_user")
 
   @@index([entity_type, entity_id], map: "idx_entity")
   @@index([phone], map: "idx_phone")
@@ -1007,52 +1045,27 @@ model whatsapp_messages {
   @@index([template_id], map: "idx_template_id")
 }
 
-/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
-model electricity_bill_items {
-  s_no                Int               @id @default(autoincrement())
-  electricity_bill_id Int
-  tenant_id           Int
-  share_amount        Decimal           @db.Decimal(10, 2)
-  share_percentage    Decimal           @db.Decimal(5, 2)
-  paid_amount         Decimal?          @default(0.00) @db.Decimal(10, 2)
-  status              String?           @default("PENDING") @db.VarChar(20)
-  allocation_basis    String?           @default("EQUAL") @db.VarChar(20)
-  billing_days        Int?
-  payment_date        DateTime?         @db.Timestamp(0)
-  payment_method      String?           @db.VarChar(50)
-  created_at          DateTime?         @default(now()) @db.Timestamp(0)
-  updated_at          DateTime?         @default(now()) @db.Timestamp(0)
-  electricity_bills   electricity_bills @relation(fields: [electricity_bill_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bill_items_ibfk_1")
-  tenants             tenants           @relation(fields: [tenant_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bill_items_ibfk_2")
-
-  @@unique([electricity_bill_id, tenant_id], map: "uk_bill_tenant")
-  @@index([electricity_bill_id], map: "idx_ebi_bill")
-  @@index([status], map: "idx_ebi_status")
-  @@index([tenant_id], map: "idx_ebi_tenant")
-}
-
-model electricity_bills {
-  s_no                   Int                      @id @default(autoincrement())
-  pg_id                  Int
-  room_id                Int
-  bill_period_start      DateTime                 @db.Date
-  bill_period_end        DateTime                 @db.Date
-  total_amount           Decimal                  @db.Decimal(10, 2)
-  units_consumed         Decimal?                 @db.Decimal(10, 2)
-  rate_per_unit          Decimal?                 @db.Decimal(10, 2)
-  meter_reading_start    Decimal?                 @db.Decimal(10, 2)
-  meter_reading_end      Decimal?                 @db.Decimal(10, 2)
-  status                 String?                  @default("PENDING") @db.VarChar(20)
-  due_date               DateTime?                @db.Date
-  created_at             DateTime?                @default(now()) @db.Timestamp(0)
-  updated_at             DateTime?                @default(now()) @db.Timestamp(0)
-  electricity_bill_items electricity_bill_items[]
-  pg_locations           pg_locations             @relation(fields: [pg_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bills_ibfk_1")
-  rooms                  rooms                    @relation(fields: [room_id], references: [s_no], onDelete: Cascade, onUpdate: NoAction, map: "electricity_bills_ibfk_2")
-
-  @@index([bill_period_start, bill_period_end], map: "idx_eb_period")
-  @@index([pg_id], map: "idx_eb_pg")
-  @@index([room_id], map: "idx_eb_room")
+model whatsapp_templates {
+  s_no               Int                                 @id @default(autoincrement())
+  name               String                              @unique(map: "name") @db.VarChar(100)
+  display_name       String                              @db.VarChar(200)
+  meta_template_name String?                             @db.VarChar(200)
+  body               String                              @db.Text
+  variables          Json?
+  category           whatsapp_templates_category         @default(UTILITY)
+  status             whatsapp_templates_status           @default(DRAFT)
+  channel            whatsapp_templates_channel          @default(WHATSAPP)
+  subject            String?                             @db.VarChar(255)
+  recipient_types    Json?
+  is_system          Boolean                             @default(false)
+  organization_id    Int?
+  version            Int                                 @default(1)
+  lifecycle_status   whatsapp_templates_lifecycle_status @default(DRAFT)
+  language           String                              @default("en") @db.VarChar(10)
+  created_at         DateTime                            @default(now()) @db.Timestamp(0)
+  updated_at         DateTime                            @default(now()) @db.Timestamp(0)
+  is_deleted         Boolean                             @default(false)
+  whatsapp_messages  whatsapp_messages[]
 }
 
 enum permissions_master_action {
@@ -1060,6 +1073,11 @@ enum permissions_master_action {
   EDIT
   VIEW
   DELETE
+}
+
+enum tenant_ticket_comments_sender_type {
+  TENANT
+  OWNER
 }
 
 enum issue_ticket_comments_author_source {
@@ -1084,6 +1102,13 @@ enum user_subscriptions_status {
   PENDING
 }
 
+enum tenant_tickets_category {
+  MAINTENANCE
+  COMPLAINT
+  REQUEST
+  OTHER
+}
+
 enum users_status {
   ACTIVE
   INACTIVE
@@ -1101,6 +1126,12 @@ enum pg_locations_rent_cycle_type {
   MIDMONTH
 }
 
+enum whatsapp_templates_category {
+  UTILITY
+  MARKETING
+  AUTHENTICATION
+}
+
 enum advance_payments_payment_method {
   GPAY
   PHONEPE
@@ -1115,6 +1146,13 @@ enum refund_payments_payment_method {
   BANK_TRANSFER
 }
 
+enum whatsapp_templates_status {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
 enum rent_payments_payment_method {
   GPAY
   PHONEPE
@@ -1126,6 +1164,25 @@ enum subscription_payments_payment_type {
   NEW_SUBSCRIPTION
   RENEWAL
   UPGRADE
+}
+
+enum tenant_tickets_status {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum whatsapp_messages_channel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum whatsapp_templates_channel {
+  WHATSAPP
+  SMS
+  EMAIL
 }
 
 enum pg_locations_status {
@@ -1150,6 +1207,17 @@ enum subscription_payments_status {
   PENDING
 }
 
+enum tenant_tickets_priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum whatsapp_messages_mode {
+  MANUAL
+  API
+}
+
 enum advance_payments_status {
   PAID
   PENDING
@@ -1170,10 +1238,25 @@ enum refund_payments_status {
   PARTIAL
 }
 
+enum whatsapp_messages_status {
+  PENDING
+  LINK_GENERATED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
 enum tenants_status {
   ACTIVE
   INACTIVE
   CHECKED_OUT
+}
+
+enum whatsapp_templates_lifecycle_status {
+  DRAFT
+  ACTIVE
+  ARCHIVED
 }
 
 enum pg_locations_pg_type {
@@ -1191,56 +1274,4 @@ enum subscription_invoices_status {
   ACTIVE
   CANCELLED
   REFUNDED
-}
-
-enum tenant_ticket_comments_sender_type {
-  TENANT
-  OWNER
-}
-
-enum tenant_tickets_category {
-  MAINTENANCE
-  COMPLAINT
-  REQUEST
-  OTHER
-}
-
-enum tenant_tickets_status {
-  OPEN
-  IN_PROGRESS
-  RESOLVED
-  CLOSED
-}
-
-enum tenant_tickets_priority {
-  LOW
-  MEDIUM
-  HIGH
-}
-
-enum whatsapp_template_category {
-  UTILITY
-  MARKETING
-  AUTHENTICATION
-}
-
-enum whatsapp_template_status {
-  DRAFT
-  PENDING_APPROVAL
-  APPROVED
-  REJECTED
-}
-
-enum whatsapp_message_mode {
-  MANUAL
-  API
-}
-
-enum whatsapp_message_status {
-  PENDING
-  LINK_GENERATED
-  SENT
-  DELIVERED
-  READ
-  FAILED
 }

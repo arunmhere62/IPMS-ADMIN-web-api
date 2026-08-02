@@ -367,11 +367,11 @@ export class CrmService {
     const lead = await this.prisma.crm_leads.upsert({
       where: { contact_id: contactId },
       update: assigned_to
-        ? { assigned_user: { connect: { s_no: assigned_to } } }
+        ? { user: { connect: { s_no: assigned_to } } }
         : {},
       create: {
         crm_contacts: { connect: { s_no: contactId } },
-        ...(assigned_to ? { assigned_user: { connect: { s_no: assigned_to } } } : {}),
+        ...(assigned_to ? { user: { connect: { s_no: assigned_to } } } : {}),
       },
     });
     // update contact status
@@ -411,7 +411,7 @@ export class CrmService {
         orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
-        include: { crm_contacts: true, assigned_user: true },
+        include: { crm_contacts: true, user: true },
       }),
       this.prisma.crm_leads.count({ where }),
     ]);
@@ -426,7 +426,7 @@ export class CrmService {
   }
 
   async getLead(id: number) {
-    const data = await this.prisma.crm_leads.findUnique({ where: { s_no: id }, include: { crm_contacts: true, assigned_user: true } });
+    const data = await this.prisma.crm_leads.findUnique({ where: { s_no: id }, include: { crm_contacts: true, user: true } });
     if (!data) throw new NotFoundException('Lead not found');
     if (data.crm_contacts) {
       const [enriched] = await this.enrichWithLocation([data.crm_contacts]);

@@ -14,7 +14,8 @@ import { TicketsModule } from './tickets/tickets.module';
 import { ConfigModule } from '@nestjs/config';
 import { CrmModule } from './crm/crm.module';
 import { LocationModule } from './location/location.module';
-import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { MessagesModule } from './messages/messages.module';
+import { MessageTemplatesModule } from './message-templates/message-templates.module';
 
 @Module({
   imports: [
@@ -34,7 +35,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     RolePermissionsModule,
     CrmModule,
     LocationModule,
-    WhatsAppModule,
+    MessagesModule,
+    MessageTemplatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
