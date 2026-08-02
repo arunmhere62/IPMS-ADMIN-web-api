@@ -17,6 +17,11 @@ export enum MessageEntityType {
   USER = 'USER',
 }
 
+export enum WhatsAppSendMode {
+  MANUAL = 'MANUAL',
+  API = 'API',
+}
+
 export class SendMessageDto {
   @ApiProperty({ enum: whatsapp_messages_channel, example: 'WHATSAPP' })
   @IsEnum(whatsapp_messages_channel)
@@ -29,6 +34,11 @@ export class SendMessageDto {
   @ApiProperty({ example: 1 })
   @IsInt()
   entity_id: number;
+
+  @ApiPropertyOptional({ enum: WhatsAppSendMode, example: 'MANUAL', description: 'WhatsApp only: MANUAL generates wa.me link, API sends via Meta. Defaults to auto-detect from env.' })
+  @IsOptional()
+  @IsEnum(WhatsAppSendMode)
+  send_mode?: WhatsAppSendMode;
 
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()

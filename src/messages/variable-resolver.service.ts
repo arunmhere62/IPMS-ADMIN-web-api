@@ -96,7 +96,7 @@ export class VariableResolverService {
       email: base.recipient_email ?? '',
       company: base.organization_name ?? '',
       org: base.organization_name ?? '',
-      playstore_link: process.env.PLAYSTORE_LINK ?? 'https://play.google.com/store/apps/details?id=com.indianpgmanagement.ipms',
+      playstore_link: process.env.PLAYSTORE_LINK ?? 'https://play.google.com/store/apps/details?id=com.pgmanagement.app&pcampaignid=web_share',
       appstore_link: process.env.APPSTORE_LINK ?? '#',
       website_url: process.env.WEBSITE_URL ?? 'https://www.indianpgmanagement.com',
       support_phone: process.env.SUPPORT_PHONE ?? base.recipient_phone ?? '',

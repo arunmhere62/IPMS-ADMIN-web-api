@@ -55,6 +55,7 @@ export class MessagesService {
       entityType: dto.entity_type,
       entityId: dto.entity_id,
       senderUserId,
+      sendMode: dto.send_mode as 'MANUAL' | 'API' | undefined,
     });
 
     const status = result.status as whatsapp_messages_status;

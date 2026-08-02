@@ -6,6 +6,7 @@ export interface MessagePayload {
   entityType: string;
   entityId: number;
   senderUserId: number;
+  sendMode?: 'MANUAL' | 'API';
 }
 
 export interface SendResult {

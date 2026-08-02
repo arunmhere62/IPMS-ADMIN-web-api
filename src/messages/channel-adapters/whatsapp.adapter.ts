@@ -6,9 +6,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private readonly logger = new Logger(WhatsAppAdapter.name);
 
   async send(payload: MessagePayload): Promise<SendResult> {
-    const useMetaApi = Boolean(
-      process.env.META_PHONE_NUMBER_ID && process.env.META_ACCESS_TOKEN,
-    );
+    const useMetaApi =
+      payload.sendMode === 'API' ||
+      (payload.sendMode === undefined &&
+        Boolean(process.env.META_PHONE_NUMBER_ID && process.env.META_ACCESS_TOKEN));
 
     if (!useMetaApi) {
       return this.sendManual(payload);
