@@ -16,6 +16,7 @@ import { CrmModule } from './crm/crm.module';
 import { LocationModule } from './location/location.module';
 import { MessagesModule } from './messages/messages.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
+import { AppSettingsModule } from './app-settings/app-settings.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { MessageTemplatesModule } from './message-templates/message-templates.mo
     LocationModule,
     MessagesModule,
     MessageTemplatesModule,
+    AppSettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

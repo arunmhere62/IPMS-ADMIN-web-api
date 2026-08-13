@@ -10,6 +10,7 @@ interface ListOrganizationsParams {
   status?: string;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
+  deleted?: boolean;
 }
 
 @Injectable()
@@ -17,11 +18,11 @@ export class OrganizationsService {
   constructor(private readonly consumerPrisma: ConsumerPrismaService) {}
 
   async listOrganizations(params: ListOrganizationsParams) {
-    const { page, limit, search, status, sortBy, sortOrder } = params;
+    const { page, limit, search, status, sortBy, sortOrder, deleted } = params;
     const skip = (page - 1) * limit;
 
     const whereOrganizations: any = {
-      is_deleted: false,
+      is_deleted: Boolean(deleted),
     };
 
     if (search) {
@@ -51,6 +52,8 @@ export class OrganizationsService {
           name: true,
           description: true,
           status: true,
+          is_deleted: true,
+          superadmin_id: true,
           created_at: true,
           updated_at: true,
           pg_locations: {
@@ -145,6 +148,8 @@ export class OrganizationsService {
         name: org.name,
         description: org.description,
         status: org.status,
+        is_deleted: org.is_deleted,
+        superadmin_id: org.superadmin_id,
         created_at: org.created_at,
         updated_at: org.updated_at,
         pg_locations_count: pgLocations.length,
@@ -166,16 +171,17 @@ export class OrganizationsService {
   }
 
   async getOrganizationDetails(organizationId: number) {
-    const org = await this.consumerPrisma.organization.findFirst({
+    const org = await this.consumerPrisma.organization.findUnique({
       where: {
         s_no: organizationId,
-        is_deleted: false,
       },
       select: {
         s_no: true,
         name: true,
         description: true,
         status: true,
+        is_deleted: true,
+        superadmin_id: true,
         created_at: true,
         updated_at: true,
         pg_locations: {
@@ -277,6 +283,8 @@ export class OrganizationsService {
         name: org.name,
         description: org.description,
         status: org.status,
+        is_deleted: org.is_deleted,
+        superadmin_id: org.superadmin_id,
         created_at: org.created_at,
         updated_at: org.updated_at,
         pg_locations_count: pgLocations.length,
@@ -287,6 +295,125 @@ export class OrganizationsService {
         pg_locations: pgLocations,
       },
       'Organization fetched successfully',
+    );
+  }
+
+  async reactivateOrganization(organizationId: number) {
+    const org = await this.consumerPrisma.organization.findUnique({
+      where: { s_no: organizationId },
+    });
+
+    if (!org) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    if (!org.is_deleted && org.status === 'ACTIVE') {
+      return ResponseUtil.success(null, 'Organization is already active');
+    }
+
+    await this.consumerPrisma.$transaction([
+      this.consumerPrisma.organization.update({
+        where: { s_no: organizationId },
+        data: {
+          is_deleted: false,
+          status: 'ACTIVE',
+          deleted_at: null,
+          deleted_by: null,
+        },
+      }),
+
+      // Reactivate the super admin if it exists
+      ...(org.superadmin_id
+        ? [
+            this.consumerPrisma.users.update({
+              where: { s_no: org.superadmin_id },
+              data: {
+                is_deleted: false,
+                status: 'ACTIVE',
+              },
+            }),
+          ]
+        : []),
+    ]);
+
+    return ResponseUtil.success(
+      {
+        s_no: org.s_no,
+        name: org.name,
+        status: 'ACTIVE',
+        is_deleted: false,
+        superadmin_id: org.superadmin_id,
+      },
+      'Organization and super admin reactivated successfully',
+    );
+  }
+
+  async deleteOrganization(organizationId: number, adminUserId: number, reason?: string) {
+    const org = await this.consumerPrisma.organization.findUnique({
+      where: { s_no: organizationId },
+    });
+
+    if (!org) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    if (org.is_deleted) {
+      return ResponseUtil.success(null, 'Organization is already deleted');
+    }
+
+    const now = new Date();
+
+    const orgUsers = await this.consumerPrisma.users.findMany({
+      where: { organization_id: organizationId },
+      select: { s_no: true },
+    });
+    const orgUserIds = orgUsers.map((u) => u.s_no);
+
+    await this.consumerPrisma.$transaction([
+      this.consumerPrisma.organization.update({
+        where: { s_no: organizationId },
+        data: {
+          is_deleted: true,
+          status: 'INACTIVE',
+          deleted_at: now,
+          deleted_by: adminUserId,
+        },
+      }),
+
+      ...(org.superadmin_id
+        ? [
+            this.consumerPrisma.users.update({
+              where: { s_no: org.superadmin_id },
+              data: {
+                is_deleted: true,
+                status: 'INACTIVE',
+              },
+            }),
+          ]
+        : []),
+
+      this.consumerPrisma.tokens.updateMany({
+        where: {
+          user_id: { in: orgUserIds },
+          is_revoked: false,
+        },
+        data: {
+          is_revoked: true,
+          revoked_at: now,
+        },
+      }),
+    ]);
+
+    return ResponseUtil.success(
+      {
+        s_no: org.s_no,
+        name: org.name,
+        status: 'INACTIVE',
+        is_deleted: true,
+        superadmin_id: org.superadmin_id,
+        reason: reason || 'Admin-initiated deletion',
+      },
+      'Organization and super admin deleted successfully',
     );
   }
 
