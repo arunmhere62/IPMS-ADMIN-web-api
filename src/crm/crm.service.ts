@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ManagementPrismaService } from '../prisma/management-prisma.service';
 import { ConsumerPrismaService } from '../prisma/consumer-prisma.service';
+import { toE164 } from '../common/utils/phone.util';
 
 @Injectable()
 export class CrmService {
@@ -53,10 +54,17 @@ export class CrmService {
 
     if (params.search) {
       const q = params.search.trim();
+      // For phone searches: strip non-digits so "3789" matches "+919876543789"
+      const digitsOnly = q.replace(/\D/g, '');
+      const phoneConditions: any[] = [{ phone: { contains: q } }, { alternate_phone: { contains: q } }];
+      if (digitsOnly && digitsOnly !== q) {
+        phoneConditions.push({ phone: { contains: digitsOnly } });
+        phoneConditions.push({ alternate_phone: { contains: digitsOnly } });
+      }
       where.OR = [
         { pg_name: { contains: q } },
         { owner_name: { contains: q } },
-        { phone: { contains: q } },
+        ...phoneConditions,
         { area: { contains: q } },
       ];
     }
@@ -80,8 +88,142 @@ export class CrmService {
     return [enriched, total];
   }
 
+  /**
+   * Enterprise-level duplicate check for bulk import preview.
+   * Checks rows against DB (existing contacts) AND within the batch itself.
+   * Returns per-row duplicate status with reason + matched existing contact info.
+   */
+  async checkDuplicates(rows: any[]): Promise<{
+    total: number;
+    duplicates: number;
+    unique: number;
+    rows: Array<{
+      index: number;
+      pg_name: string;
+      phone: string | null;
+      whatsapp_number: string | null;
+      is_duplicate: boolean;
+      duplicate_reason: string | null;
+      matched_contact_id: number | null;
+      matched_pg_name: string | null;
+      matched_phone: string | null;
+    }>;
+  }> {
+    const normalized = rows.map((r) => {
+      const rawPhone = String(r.phone ?? '').trim();
+      const phoneParts = rawPhone.split(/\s*[/,|&]\s*/).map((p) => toE164(p)).filter(Boolean);
+      return {
+        pg_name: (r.pg_name ?? '').toString().trim(),
+        phone: phoneParts[0] ?? null,
+        whatsapp_number: toE164(r.whatsapp_number) ?? null,
+      };
+    });
+
+    const phones = normalized.map((r) => r.phone).filter(Boolean) as string[];
+    const whatsapps = normalized.map((r) => r.whatsapp_number).filter(Boolean) as string[];
+    const pgNames = normalized.map((r) => r.pg_name).filter(Boolean) as string[];
+
+    const orConditions: any[] = [];
+    if (phones.length) orConditions.push({ phone: { in: phones } });
+    if (whatsapps.length) orConditions.push({ whatsapp_number: { in: whatsapps } });
+    if (pgNames.length) orConditions.push({ pg_name: { in: pgNames } });
+
+    const existing = orConditions.length
+      ? await this.prisma.crm_contacts.findMany({
+          where: { OR: orConditions, is_deleted: false },
+          select: { s_no: true, pg_name: true, phone: true, whatsapp_number: true },
+        })
+      : [];
+
+    const byPhone = new Map(existing.filter((c) => c.phone).map((c) => [c.phone, c]));
+    const byWhatsapp = new Map(existing.filter((c) => c.whatsapp_number).map((c) => [c.whatsapp_number, c]));
+    const byPgName = new Map(existing.map((c) => [c.pg_name, c]));
+
+    const seenPhones = new Set<string>();
+    const seenWhatsapp = new Set<string>();
+    const seenPgNames = new Set<string>();
+
+    const result = normalized.map((r, i) => {
+      let isDuplicate = false;
+      let reason: string | null = null;
+      let matched: { s_no: number; pg_name: string; phone: string | null } | null = null;
+
+      if (r.phone && byPhone.has(r.phone)) {
+        isDuplicate = true;
+        reason = `Phone ${r.phone} already exists in DB`;
+        matched = byPhone.get(r.phone)!;
+      } else if (r.whatsapp_number && byWhatsapp.has(r.whatsapp_number)) {
+        isDuplicate = true;
+        reason = `WhatsApp ${r.whatsapp_number} already exists in DB`;
+        matched = byWhatsapp.get(r.whatsapp_number)!;
+      } else if (r.pg_name && byPgName.has(r.pg_name)) {
+        isDuplicate = true;
+        reason = `PG name "${r.pg_name}" already exists in DB`;
+        matched = byPgName.get(r.pg_name)!;
+      } else if (r.phone && seenPhones.has(r.phone)) {
+        isDuplicate = true;
+        reason = `Phone ${r.phone} duplicated within this batch`;
+      } else if (r.whatsapp_number && seenWhatsapp.has(r.whatsapp_number)) {
+        isDuplicate = true;
+        reason = `WhatsApp ${r.whatsapp_number} duplicated within this batch`;
+      } else if (r.pg_name && seenPgNames.has(r.pg_name)) {
+        isDuplicate = true;
+        reason = `PG name "${r.pg_name}" duplicated within this batch`;
+      }
+
+      if (r.phone) seenPhones.add(r.phone);
+      if (r.whatsapp_number) seenWhatsapp.add(r.whatsapp_number);
+      if (r.pg_name) seenPgNames.add(r.pg_name);
+
+      return {
+        index: i,
+        pg_name: r.pg_name,
+        phone: r.phone,
+        whatsapp_number: r.whatsapp_number,
+        is_duplicate: isDuplicate,
+        duplicate_reason: reason,
+        matched_contact_id: matched?.s_no ?? null,
+        matched_pg_name: matched?.pg_name ?? null,
+        matched_phone: matched?.phone ?? null,
+      };
+    });
+
+    const duplicates = result.filter((r) => r.is_duplicate).length;
+    return {
+      total: result.length,
+      duplicates,
+      unique: result.length - duplicates,
+      rows: result,
+    };
+  }
+
   async createContact(data: Parameters<typeof this.prisma.crm_contacts.create>[0]['data']) {
-    return this.prisma.crm_contacts.create({ data });
+    const payload = { ...data } as any;
+    if (payload.phone) payload.phone = toE164(payload.phone);
+    if (payload.alternate_phone) payload.alternate_phone = toE164(payload.alternate_phone);
+    if (payload.whatsapp_number) payload.whatsapp_number = toE164(payload.whatsapp_number);
+
+    // Duplicate check: phone, whatsapp_number, or pg_name (case-insensitive)
+    const orConditions: any[] = [];
+    if (payload.phone) orConditions.push({ phone: payload.phone });
+    if (payload.whatsapp_number) orConditions.push({ whatsapp_number: payload.whatsapp_number });
+    if (payload.pg_name) orConditions.push({ pg_name: { equals: payload.pg_name } });
+
+    if (orConditions.length) {
+      const existing = await this.prisma.crm_contacts.findFirst({
+        where: { OR: orConditions, is_deleted: false },
+        select: { s_no: true, phone: true, whatsapp_number: true, pg_name: true },
+      });
+      if (existing) {
+        const reasons: string[] = [];
+        if (payload.phone && existing.phone === payload.phone) reasons.push('phone');
+        if (payload.whatsapp_number && existing.whatsapp_number === payload.whatsapp_number) reasons.push('whatsapp number');
+        if (payload.pg_name && existing.pg_name === payload.pg_name) reasons.push('PG name');
+        throw new Error(`Duplicate contact detected (matches existing contact #${existing.s_no} by ${reasons.join(', ')})`);
+      }
+    }
+
+    return this.prisma.crm_contacts.create({ data: payload });
   }
 
   async bulkImportContacts(rows: any[], filename: string, uploadedBy?: number) {
@@ -94,7 +236,53 @@ export class CrmService {
     });
 
     const VALID_SOURCES = ['GOOGLE', 'EXCEL', 'MANUAL', 'REFERRAL', 'WEBSITE', 'OTHER'];
-    const toNull = (v: any) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
+
+    const isBlankLike = (v: any) => {
+      if (v === undefined || v === null) return true;
+      const str = String(v).trim();
+      const blanks = ['', '-', '—', '--', '___', '_', 'n/a', 'na', 'nil', 'none', 'null'];
+      return blanks.includes(str.toLowerCase());
+    };
+
+    const toNull = (v: any) => (isBlankLike(v) ? null : String(v).trim());
+    const toPhone = (v: any) => toE164(v);
+
+    const toNumber = (v: any, allowFloat = false) => {
+      if (isBlankLike(v)) return null;
+      const num = Number(v);
+      if (Number.isNaN(num)) throw new Error(`Invalid number "${v}"`);
+      if (!allowFloat && !Number.isInteger(num)) throw new Error(`Expected whole number, got "${v}"`);
+      return num;
+    };
+
+    const toRating = (v: any) => {
+      const num = toNumber(v, true);
+      if (num === null) return null;
+      if (num < 0 || num > 5) throw new Error(`google_rating must be between 0 and 5, got "${v}"`);
+      return num;
+    };
+
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const toEmail = (v: any) => {
+      const email = toNull(v);
+      if (!email) return null;
+      if (!EMAIL_RE.test(email)) throw new Error(`Invalid email "${email}"`);
+      return email;
+    };
+
+    const toUrl = (v: any, fieldName: string) => {
+      let url = toNull(v);
+      if (!url) return null;
+      url = url.toLowerCase().startsWith('www.') ? `https://${url}` : url;
+      // Allow domain-like URLs missing a scheme and normalize them
+      if (!/^https?:\/\//i.test(url) && /^[^\s]+\.[^\s]+/.test(url)) {
+        url = `https://${url}`;
+      }
+      if (!/^https?:\/\/.+/i.test(url)) {
+        throw new Error(`Invalid ${fieldName} "${url}"`);
+      }
+      return url;
+    };
 
     let imported = 0;
     let duplicates = 0;
@@ -102,19 +290,34 @@ export class CrmService {
     const duplicateRows: any[] = [];
     const cityCache = new Map<string, { city_id: number; state_id: number; country_id: number } | null>();
     const seenPhones = new Set<string>();
+    const seenWhatsapp = new Set<string>();
+    const seenPgNames = new Set<string>();
 
-    // Pre-fetch existing phones from DB for duplicate check
+    // Pre-fetch existing phones, whatsapp numbers, and pg_names from DB for duplicate check
     const phonesInBatch = rows
-      .map((r) => toNull(r.phone))
+      .map((r) => toPhone(r.phone))
       .filter((p): p is string => !!p);
+    const whatsappInBatch = rows
+      .map((r) => toPhone(r.whatsapp_number))
+      .filter((w): w is string => !!w);
+    const pgNamesInBatch = rows
+      .map((r) => (r.pg_name ?? '').toString().trim())
+      .filter((n): n is string => !!n);
 
-    const existingContacts = phonesInBatch.length
+    const orConditions: any[] = [];
+    if (phonesInBatch.length) orConditions.push({ phone: { in: phonesInBatch } });
+    if (whatsappInBatch.length) orConditions.push({ whatsapp_number: { in: whatsappInBatch } });
+    if (pgNamesInBatch.length) orConditions.push({ pg_name: { in: pgNamesInBatch } });
+
+    const existingContacts = orConditions.length
       ? await this.prisma.crm_contacts.findMany({
-          where: { phone: { in: phonesInBatch }, is_deleted: false },
-          select: { phone: true },
+          where: { OR: orConditions, is_deleted: false },
+          select: { phone: true, whatsapp_number: true, pg_name: true },
         })
       : [];
-    const existingPhones = new Set(existingContacts.map((c) => c.phone));
+    const existingPhones = new Set(existingContacts.map((c) => c.phone).filter(Boolean));
+    const existingWhatsapp = new Set(existingContacts.map((c) => c.whatsapp_number).filter(Boolean));
+    const existingPgNames = new Set(existingContacts.map((c) => c.pg_name).filter(Boolean));
 
     for (let i = 0; i < rows.length; i++) {
       try {
@@ -123,17 +326,42 @@ export class CrmService {
           throw new Error('pg_name is required');
         }
 
-        const phone = toNull(row.phone);
+        // Parse primary and alternate phone. Supports "8883130406 / 9840885444" in the phone column
+        const rawPhone = String(row.phone ?? '').trim();
+        const phoneParts = rawPhone
+          .split(/\s*[/,|&]\s*/)
+          .map((p) => toPhone(p))
+          .filter((p): p is string => !!p);
 
-        // Check duplicate phone — in DB or within this batch
-        if (phone) {
-          if (existingPhones.has(phone) || seenPhones.has(phone)) {
-            duplicates++;
-            duplicateRows.push({ row: i + 1, phone, pg_name: row.pg_name, data: rows[i] });
-            continue;
-          }
-          seenPhones.add(phone);
+        const phone = phoneParts[0] ?? null;
+        const alternate_phone = toPhone(row.alternate_phone) ?? phoneParts[1] ?? null;
+        const whatsapp_number = toPhone(row.whatsapp_number);
+
+        // A contact must have at least a phone or a whatsapp number
+        if (!phone && !whatsapp_number) {
+          throw new Error('Phone or WhatsApp number is required');
         }
+
+        // Check duplicate by phone, whatsapp, or pg_name — in DB or within this batch
+        const pgName = row.pg_name.trim();
+        let dupReason = '';
+        if (phone && (existingPhones.has(phone) || seenPhones.has(phone))) {
+          dupReason = `phone ${phone}`;
+        } else if (whatsapp_number && (existingWhatsapp.has(whatsapp_number) || seenWhatsapp.has(whatsapp_number))) {
+          dupReason = `whatsapp ${whatsapp_number}`;
+        } else if (existingPgNames.has(pgName) || seenPgNames.has(pgName)) {
+          dupReason = `pg_name "${pgName}"`;
+        }
+
+        if (dupReason) {
+          duplicates++;
+          duplicateRows.push({ row: i + 1, reason: dupReason, pg_name: row.pg_name, data: rows[i] });
+          continue;
+        }
+
+        if (phone) seenPhones.add(phone);
+        if (whatsapp_number) seenWhatsapp.add(whatsapp_number);
+        seenPgNames.add(pgName);
 
         let country_id = row.country_id ? Number(row.country_id) : null;
         let state_id = row.state_id ? Number(row.state_id) : null;
@@ -174,6 +402,19 @@ export class CrmService {
           }
         }
 
+        if (!city_id || !state_id) {
+          throw new Error('Valid city and state are required');
+        }
+
+        // Validate numeric fields
+        const no_of_rooms = toNumber(row.no_of_rooms, false);
+        const google_rating = toRating(row.google_rating);
+
+        // Validate email and URLs
+        const email = toEmail(row.email);
+        const google_maps_url = toUrl(row.google_maps_url, 'google_maps_url');
+        const website = toUrl(row.website, 'website');
+
         // Validate source against enum values
         const rawSource = toNull(row.source);
         const source = rawSource && VALID_SOURCES.includes(rawSource.toUpperCase())
@@ -186,17 +427,18 @@ export class CrmService {
             owner_name: toNull(row.owner_name),
             designation: toNull(row.designation),
             phone,
-            whatsapp_number: toNull(row.whatsapp_number),
-            email: toNull(row.email),
+            alternate_phone,
+            whatsapp_number,
+            email,
             country_id,
             state_id,
             city_id,
             area: toNull(row.area),
             address: toNull(row.address),
-            no_of_rooms: row.no_of_rooms ? Number(row.no_of_rooms) : null,
-            google_maps_url: toNull(row.google_maps_url),
-            google_rating: row.google_rating ? Number(row.google_rating) : null,
-            website: toNull(row.website),
+            no_of_rooms,
+            google_maps_url,
+            google_rating,
+            website,
             tags: toNull(row.tags),
             notes: toNull(row.notes),
             source: source as any,
@@ -205,7 +447,14 @@ export class CrmService {
         });
         imported++;
       } catch (err: any) {
-        failed.push({ row: i + 1, error: err.message, data: rows[i] });
+        const failedRow = rows[i];
+        failed.push({
+          row: i + 1,
+          phone: toPhone(failedRow.phone) ?? failedRow.phone ?? null,
+          pg_name: failedRow.pg_name ?? '',
+          error: err.message,
+          data: failedRow,
+        });
       }
     }
 
@@ -238,7 +487,11 @@ export class CrmService {
 
   async updateContact(id: number, data: Parameters<typeof this.prisma.crm_contacts.update>[0]['data']) {
     await this.getContact(id);
-    return this.prisma.crm_contacts.update({ where: { s_no: id }, data });
+    const payload = { ...data } as any;
+    if (payload.phone) payload.phone = toE164(payload.phone);
+    if (payload.alternate_phone) payload.alternate_phone = toE164(payload.alternate_phone);
+    if (payload.whatsapp_number) payload.whatsapp_number = toE164(payload.whatsapp_number);
+    return this.prisma.crm_contacts.update({ where: { s_no: id }, data: payload });
   }
 
   async softDeleteContact(id: number) {
@@ -324,16 +577,7 @@ export class CrmService {
   }
 
   // LEADS
-  private STAGE_SCORE: Record<string, number> = {
-    NEW: 5,
-    CONTACTED: 15,
-    INTERESTED: 30,
-    DEMO_SCHEDULED: 50,
-    NEGOTIATION: 70,
-    WON: 100,
-    LOST: 0,
-  };
-
+  // Stage scores are now read from the crm_lead_stages table (see getStageScoreMap)
   private PRIORITY_SCORE: Record<string, number> = {
     LOW: 2,
     MEDIUM: 5,
@@ -345,12 +589,13 @@ export class CrmService {
     const lead = await this.prisma.crm_leads.findUnique({ where: { s_no: leadId } });
     if (!lead) return 0;
 
-    const [activityCount, visitCount] = await Promise.all([
+    const [activityCount, visitCount, stageScoreMap] = await Promise.all([
       this.prisma.crm_lead_activities.count({ where: { lead_id: leadId, is_deleted: false } }),
       this.prisma.crm_site_visits.count({ where: { lead_id: leadId, is_deleted: false, status: 'COMPLETED' } }),
+      this.getStageScoreMap(),
     ]);
 
-    const stageScore = this.STAGE_SCORE[lead.stage] ?? 0;
+    const stageScore = stageScoreMap[lead.stage ?? 'NEW'] ?? 0;
     const priorityScore = this.PRIORITY_SCORE[lead.priority] ?? 0;
     const activityScore = Math.min(activityCount * 3, 15);
     const visitScore = Math.min(visitCount * 10, 20);
@@ -394,10 +639,20 @@ export class CrmService {
 
     if (params.search) {
       const q = params.search.trim();
+      // For phone searches: strip non-digits so "3789" matches "+919876543789"
+      const digitsOnly = q.replace(/\D/g, '');
+      const phoneConditions: any[] = [
+        { crm_contacts: { phone: { contains: q } } },
+        { crm_contacts: { alternate_phone: { contains: q } } },
+      ];
+      if (digitsOnly && digitsOnly !== q) {
+        phoneConditions.push({ crm_contacts: { phone: { contains: digitsOnly } } });
+        phoneConditions.push({ crm_contacts: { alternate_phone: { contains: digitsOnly } } });
+      }
       where.OR = [
         { crm_contacts: { pg_name: { contains: q } } },
         { crm_contacts: { owner_name: { contains: q } } },
-        { crm_contacts: { phone: { contains: q } } },
+        ...phoneConditions,
       ];
     }
 
@@ -411,7 +666,7 @@ export class CrmService {
         orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
-        include: { crm_contacts: true, user: true },
+        include: { crm_contacts: true, user: true, crm_lead_stages: true },
       }),
       this.prisma.crm_leads.count({ where }),
     ]);
@@ -426,7 +681,7 @@ export class CrmService {
   }
 
   async getLead(id: number) {
-    const data = await this.prisma.crm_leads.findUnique({ where: { s_no: id }, include: { crm_contacts: true, user: true } });
+    const data = await this.prisma.crm_leads.findUnique({ where: { s_no: id }, include: { crm_contacts: true, user: true, crm_lead_stages: true } });
     if (!data) throw new NotFoundException('Lead not found');
     if (data.crm_contacts) {
       const [enriched] = await this.enrichWithLocation([data.crm_contacts]);
@@ -437,7 +692,24 @@ export class CrmService {
 
   async updateLead(id: number, data: Parameters<typeof this.prisma.crm_leads.update>[0]['data']) {
     await this.getLead(id);
-    const updated = await this.prisma.crm_leads.update({ where: { s_no: id }, data });
+
+    // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
+    // Prisma expects ISO-8601 for DateTime fields, but the frontend sends date-only strings
+    const payload = { ...data } as any;
+    const dateFields = ['next_follow_up_date', 'expected_close_date'];
+    for (const field of dateFields) {
+      if (field in payload && payload[field]) {
+        const val = payload[field];
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          // "2026-08-17" -> "2026-08-17T00:00:00.000Z"
+          payload[field] = new Date(val + 'T00:00:00.000Z');
+        } else if (typeof val === 'string' && val.trim() === '') {
+          payload[field] = null;
+        }
+      }
+    }
+
+    const updated = await this.prisma.crm_leads.update({ where: { s_no: id }, data: payload });
     if (data && ('stage' in data || 'priority' in data)) {
       await this.recalculateScore(id);
     }
@@ -468,6 +740,20 @@ export class CrmService {
     // ensure lead exists
     await this.getLead(leadId);
     const { user_id, ...rest } = (data as any) ?? {};
+
+    // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
+    const dateFields = ['scheduled_at', 'completed_at'];
+    for (const field of dateFields) {
+      if (field in rest && rest[field]) {
+        const val = rest[field];
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          rest[field] = new Date(val + 'T00:00:00.000Z');
+        } else if (typeof val === 'string' && val.trim() === '') {
+          rest[field] = null;
+        }
+      }
+    }
+
     const activity = await this.prisma.crm_lead_activities.create({
       data: {
         ...rest,
@@ -498,6 +784,20 @@ export class CrmService {
   async scheduleVisit(contactId: number, data: Parameters<typeof this.prisma.crm_site_visits.create>[0]['data']) {
     await this.getContact(contactId);
     const { assigned_to, lead_id, ...rest } = (data as any) ?? {};
+
+    // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
+    const dateFields = ['visit_date', 'completed_at', 'cancelled_at'];
+    for (const field of dateFields) {
+      if (field in rest && rest[field]) {
+        const val = rest[field];
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          rest[field] = new Date(val + 'T00:00:00.000Z');
+        } else if (typeof val === 'string' && val.trim() === '') {
+          rest[field] = null;
+        }
+      }
+    }
+
     return this.prisma.crm_site_visits.create({
       data: {
         ...rest,
@@ -511,7 +811,22 @@ export class CrmService {
   async updateVisit(id: number, data: Parameters<typeof this.prisma.crm_site_visits.update>[0]['data']) {
     const existing = await this.prisma.crm_site_visits.findUnique({ where: { s_no: id } });
     if (!existing) throw new NotFoundException('Visit not found');
-    const updated = await this.prisma.crm_site_visits.update({ where: { s_no: id }, data });
+
+    // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
+    const payload = { ...data } as any;
+    const dateFields = ['visit_date', 'completed_at', 'cancelled_at'];
+    for (const field of dateFields) {
+      if (field in payload && payload[field]) {
+        const val = payload[field];
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          payload[field] = new Date(val + 'T00:00:00.000Z');
+        } else if (typeof val === 'string' && val.trim() === '') {
+          payload[field] = null;
+        }
+      }
+    }
+
+    const updated = await this.prisma.crm_site_visits.update({ where: { s_no: id }, data: payload });
     if (existing.lead_id && (data as any)?.status === 'COMPLETED' && existing.status !== 'COMPLETED') {
       await this.recalculateScore(existing.lead_id);
     }
@@ -525,10 +840,19 @@ export class CrmService {
     const where: any = { is_deleted: false };
     if (params.search) {
       const q = params.search.trim();
+      const digitsOnly = q.replace(/\D/g, '');
+      const phoneConditions: any[] = [
+        { crm_leads: { crm_contacts: { phone: { contains: q } } } },
+        { crm_leads: { crm_contacts: { alternate_phone: { contains: q } } } },
+      ];
+      if (digitsOnly && digitsOnly !== q) {
+        phoneConditions.push({ crm_leads: { crm_contacts: { phone: { contains: digitsOnly } } } });
+        phoneConditions.push({ crm_leads: { crm_contacts: { alternate_phone: { contains: digitsOnly } } } });
+      }
       where.OR = [
         { crm_leads: { crm_contacts: { pg_name: { contains: q } } } },
         { crm_leads: { crm_contacts: { owner_name: { contains: q } } } },
-        { crm_leads: { crm_contacts: { phone: { contains: q } } } },
+        ...phoneConditions,
         { plan_name: { contains: q } },
       ];
     }
@@ -574,5 +898,79 @@ export class CrmService {
         .catch(() => undefined);
     }
     return sub;
+  }
+
+  // LEAD STAGES (dynamic lookup table)
+  async listLeadStages(includeInactive = false) {
+    const where: any = {};
+    if (!includeInactive) where.is_active = true;
+    return this.prisma.crm_lead_stages.findMany({
+      where,
+      orderBy: [{ sort_order: 'asc' }, { s_no: 'asc' }],
+    });
+  }
+
+  async getLeadStage(id: number) {
+    const stage = await this.prisma.crm_lead_stages.findUnique({ where: { s_no: id } });
+    if (!stage) throw new NotFoundException(`Lead stage #${id} not found`);
+    return stage;
+  }
+
+  async createLeadStage(data: { name: string; label: string; color?: string; score?: number; sort_order?: number; is_active?: boolean }) {
+    const name = data.name.toUpperCase().replace(/\s+/g, '_');
+    return this.prisma.crm_lead_stages.create({
+      data: {
+        name,
+        label: data.label,
+        color: data.color ?? 'secondary',
+        score: data.score ?? 0,
+        sort_order: data.sort_order ?? 99,
+        is_active: data.is_active ?? true,
+        is_system: false,
+      },
+    });
+  }
+
+  async updateLeadStageConfig(id: number, data: { label?: string; color?: string; score?: number; sort_order?: number; is_active?: boolean }) {
+    const existing = await this.getLeadStage(id);
+    // System stages: only allow updating color/sort_order/is_active, not label
+    const updateData: any = {};
+    if (data.label !== undefined && !existing.is_system) updateData.label = data.label;
+    if (data.color !== undefined) updateData.color = data.color;
+    if (data.score !== undefined && !existing.is_system) updateData.score = data.score;
+    if (data.sort_order !== undefined) updateData.sort_order = data.sort_order;
+    if (data.is_active !== undefined) updateData.is_active = data.is_active;
+    return this.prisma.crm_lead_stages.update({ where: { s_no: id }, data: updateData });
+  }
+
+  async deleteLeadStage(id: number) {
+    const existing = await this.getLeadStage(id);
+    if (existing.is_system) {
+      throw new Error(`Cannot delete system stage "${existing.name}"`);
+    }
+    // Check if any leads are using this stage
+    const count = await this.prisma.crm_leads.count({ where: { stage: existing.name } });
+    if (count > 0) {
+      throw new Error(`Cannot delete stage "${existing.name}" — ${count} lead(s) are using it. Disable it instead.`);
+    }
+    return this.prisma.crm_lead_stages.delete({ where: { s_no: id } });
+  }
+
+  // Helper: get stage score from DB (cached in-memory for 5 minutes)
+  private stageScoreCache: { data: Record<string, number> | null; expiresAt: number } = { data: null, expiresAt: 0 };
+
+  private async getStageScoreMap(): Promise<Record<string, number>> {
+    const now = Date.now();
+    if (this.stageScoreCache.data && now < this.stageScoreCache.expiresAt) {
+      return this.stageScoreCache.data;
+    }
+    const stages = await this.prisma.crm_lead_stages.findMany({ select: { name: true, score: true } });
+    const map: Record<string, number> = {};
+    for (const s of stages) {
+      map[s.name] = s.score ?? 0;
+    }
+    this.stageScoreCache.data = map;
+    this.stageScoreCache.expiresAt = now + 5 * 60 * 1000; // 5 min cache
+    return map;
   }
 }

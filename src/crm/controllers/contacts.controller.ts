@@ -21,10 +21,25 @@ export class ContactsController {
   @Post('bulk-import')
   async bulkImport(@Body() body: any) {
     const result = await this.crm.bulkImportContacts(body.rows ?? [], body.filename ?? 'manual_upload.xlsx', body.uploaded_by);
-    const parts = [`Imported ${result.imported} of ${result.total} contacts`];
+    // Build a clear, always-present message from the result
+    const parts: string[] = [];
+    if (result.imported > 0) {
+      parts.push(`Imported ${result.imported} of ${result.total} contacts`);
+    } else {
+      parts.push(`Imported 0 of ${result.total} contacts`);
+    }
     if (result.duplicates) parts.push(`${result.duplicates} duplicates skipped`);
     if (result.failed) parts.push(`${result.failed} failed`);
+    if (result.imported === 0 && result.duplicates === 0 && result.failed === 0) {
+      parts.push('No rows processed');
+    }
     return ResponseUtil.success(result, parts.join(', '));
+  }
+
+  @Post('check-duplicates')
+  async checkDuplicates(@Body() body: any) {
+    const result = await this.crm.checkDuplicates(body.rows ?? []);
+    return ResponseUtil.success(result, `Found ${result.duplicates} duplicate(s) of ${result.total} row(s)`);
   }
 
   @Post('bulk-convert-lead')

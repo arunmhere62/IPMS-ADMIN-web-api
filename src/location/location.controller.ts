@@ -1,5 +1,6 @@
-import { Controller, Get, Query, Param, ParseIntPipe } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Param, ParseIntPipe } from '@nestjs/common';
 import { LocationService } from './location.service';
+import { ResponseUtil } from '../common/utils/response.util';
 
 @Controller('location')
 export class LocationController {
@@ -33,5 +34,11 @@ export class LocationController {
   @Get('cities/:id')
   async getCityById(@Param('id', ParseIntPipe) id: number) {
     return this.locationService.getCityById(id);
+  }
+
+  @Post('validate-cities')
+  async validateCities(@Body() body: { names: string[] }) {
+    const result = await this.locationService.validateCities(body.names ?? []);
+    return ResponseUtil.success(result, 'Cities validated');
   }
 }

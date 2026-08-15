@@ -1,9 +1,12 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client-consumer';
 import { ConsumerPrismaService } from '../prisma/consumer-prisma.service';
 import { ResponseUtil } from '../common/utils/response.util';
 
 @Injectable()
 export class LocationService {
+  private readonly logger = new Logger(LocationService.name);
+
   constructor(private prisma: ConsumerPrismaService) {}
 
   async getCountries() {
@@ -137,6 +140,67 @@ export class LocationService {
     } catch (err) {
       if (err instanceof BadRequestException) throw err;
       throw new BadRequestException('Failed to fetch city');
+    }
+  }
+
+  async validateCities(names: string[]) {
+    const trimmed = names.map((n) => n.trim()).filter(Boolean);
+    const unique = [...new Set(trimmed.map((n) => n.toLowerCase()))];
+
+    if (!unique.length) {
+      return { valid: [], invalid: [] };
+    }
+
+    try {
+      const cities = (await this.prisma.$queryRaw(
+        Prisma.sql`
+          SELECT s_no, name, state_code, country_code
+          FROM city
+          WHERE LOWER(name) IN (${Prisma.join(unique)})
+        `,
+      )) as { s_no: number; name: string; state_code: string; country_code: string }[];
+
+      const stateCodes = [...new Set(cities.map((c) => c.state_code).filter(Boolean))];
+      const countryCodes = [...new Set(cities.map((c) => c.country_code).filter(Boolean))];
+
+      const [states, countries] = await Promise.all([
+        stateCodes.length
+          ? this.prisma.state.findMany({
+              where: { iso_code: { in: stateCodes } },
+              select: { iso_code: true, name: true },
+            })
+          : Promise.resolve([]),
+        countryCodes.length
+          ? this.prisma.country.findMany({
+              where: { iso_code: { in: countryCodes } },
+              select: { iso_code: true, name: true },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      const stateMap = new Map(states.map((s) => [s.iso_code, s.name]));
+      const countryMap = new Map(countries.map((c) => [c.iso_code, c.name]));
+
+      const matchedNames = new Set(cities.map((c) => c.name.toLowerCase()));
+      const valid = cities.map((c) => ({
+        s_no: c.s_no,
+        name: c.name,
+        state_code: c.state_code,
+        state: stateMap.get(c.state_code) ?? c.state_code,
+        country_code: c.country_code,
+        country: countryMap.get(c.country_code) ?? c.country_code,
+      }));
+
+      const invalid = unique
+        .filter((name) => !matchedNames.has(name))
+        .map((name) => ({ name }));
+
+      return { valid, invalid };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorStack = err instanceof Error ? err.stack : undefined;
+      this.logger.error(`validateCities failed: ${errorMessage}`, errorStack);
+      throw err;
     }
   }
 }
