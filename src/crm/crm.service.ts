@@ -666,7 +666,17 @@ export class CrmService {
         orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
-        include: { crm_contacts: true, user: true, crm_lead_stages: true },
+        include: {
+          crm_contacts: true,
+          user: true,
+          crm_lead_stages: true,
+          crm_lead_activities: {
+            where: { is_deleted: false },
+            orderBy: { created_at: 'desc' },
+            take: 1,
+            select: { s_no: true, type: true, title: true, description: true, outcome: true, duration_minutes: true, created_at: true },
+          },
+        },
       }),
       this.prisma.crm_leads.count({ where }),
     ]);
@@ -675,6 +685,7 @@ export class CrmService {
     const contactMap = new Map(enrichedContacts.map((c) => [c.s_no, c]));
     const enrichedLeads = rows.map((r) => ({
       ...r,
+      latest_activity: r.crm_lead_activities?.[0] ?? null,
       crm_contacts: r.crm_contacts ? contactMap.get(r.crm_contacts.s_no) ?? r.crm_contacts : r.crm_contacts,
     }));
     return [enrichedLeads, total];
@@ -764,6 +775,50 @@ export class CrmService {
     await this.prisma.crm_leads.update({ where: { s_no: leadId }, data: { last_activity_at: new Date() } });
     await this.recalculateScore(leadId);
     return activity;
+  }
+
+  async updateActivity(activityId: number, data: any) {
+    const existing = await this.prisma.crm_lead_activities.findUnique({ where: { s_no: activityId } });
+    if (!existing) throw new NotFoundException('Activity not found');
+
+    const { user_id, lead_id, s_no, created_at, ...rest } = data ?? {};
+
+    // Normalize date fields
+    const dateFields = ['scheduled_at', 'completed_at'];
+    for (const field of dateFields) {
+      if (field in rest && rest[field]) {
+        const val = rest[field];
+        if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+          rest[field] = new Date(val + 'T00:00:00.000Z');
+        } else if (typeof val === 'string' && val.trim() === '') {
+          rest[field] = null;
+        }
+      }
+    }
+
+    const updated = await this.prisma.crm_lead_activities.update({
+      where: { s_no: activityId },
+      data: rest,
+    });
+
+    // Recalculate lead score if lead_id is known
+    if (existing.lead_id) {
+      await this.recalculateScore(existing.lead_id);
+    }
+    return updated;
+  }
+
+  async deleteActivity(activityId: number) {
+    const existing = await this.prisma.crm_lead_activities.findUnique({ where: { s_no: activityId } });
+    if (!existing) throw new NotFoundException('Activity not found');
+    const deleted = await this.prisma.crm_lead_activities.update({
+      where: { s_no: activityId },
+      data: { is_deleted: true },
+    });
+    if (existing.lead_id) {
+      await this.recalculateScore(existing.lead_id);
+    }
+    return deleted;
   }
 
   // SITE VISITS

@@ -17,6 +17,7 @@ import { LocationModule } from './location/location.module';
 import { MessagesModule } from './messages/messages.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
 import { AppSettingsModule } from './app-settings/app-settings.module';
+import { DirectoryListingsModule } from './directory-listings/directory-listings.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AppSettingsModule } from './app-settings/app-settings.module';
     MessagesModule,
     MessageTemplatesModule,
     AppSettingsModule,
+    DirectoryListingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
