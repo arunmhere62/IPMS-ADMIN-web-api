@@ -17,6 +17,8 @@ import { PreviewMessageDto } from './dto/preview-message.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
 import { ResponseUtil } from '../common/utils/response.util';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('Messages')
 @Controller('messages')
@@ -27,6 +29,7 @@ export class MessagesController {
   ) {}
 
   @Get('placeholders')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async getPlaceholders() {
@@ -37,6 +40,7 @@ export class MessagesController {
   }
 
   @Post('preview')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async preview(
@@ -47,6 +51,7 @@ export class MessagesController {
   }
 
   @Post('send')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.SEND))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async send(
@@ -57,6 +62,7 @@ export class MessagesController {
   }
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async findAll(
@@ -74,6 +80,7 @@ export class MessagesController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async findOne(@Param('id', ParseIntPipe) id: number) {

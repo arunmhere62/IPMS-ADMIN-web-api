@@ -18,6 +18,9 @@ import { MessagesModule } from './messages/messages.module';
 import { MessageTemplatesModule } from './message-templates/message-templates.module';
 import { AppSettingsModule } from './app-settings/app-settings.module';
 import { DirectoryListingsModule } from './directory-listings/directory-listings.module';
+import { RbacModule } from './common/rbac/rbac.module';
+import { UsersModule } from './users/users.module';
+import { SalesOrganizationsModule } from './sales-organizations/sales-organizations.module';
 
 @Module({
   imports: [
@@ -27,6 +30,7 @@ import { DirectoryListingsModule } from './directory-listings/directory-listings
     }),
     PrismaModule,
     S3Module,
+    RbacModule,
     AuthModule,
     LegalDocumentsModule,
     TicketsModule,
@@ -41,6 +45,8 @@ import { DirectoryListingsModule } from './directory-listings/directory-listings
     MessageTemplatesModule,
     AppSettingsModule,
     DirectoryListingsModule,
+    UsersModule,
+    SalesOrganizationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

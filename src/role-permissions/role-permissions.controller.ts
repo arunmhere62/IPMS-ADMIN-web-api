@@ -16,6 +16,8 @@ import { RolePermissionsService } from './role-permissions.service';
 import { AssignPermissionsDto, BulkPermissionUpdateDto } from './dto/assign-permissions.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('role-permissions')
 @Controller('role-permissions')
@@ -25,6 +27,7 @@ export class RolePermissionsController {
   constructor(private readonly service: RolePermissionsService) {}
 
   @Post(':roleId/assign')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Assign permissions to a role' })
   @ApiParam({ name: 'roleId', description: 'Role ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Permissions assigned successfully' })
@@ -36,6 +39,7 @@ export class RolePermissionsController {
   }
 
   @Delete(':roleId/remove')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Remove permissions from a role' })
   @ApiParam({ name: 'roleId', description: 'Role ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Permissions removed successfully' })
@@ -47,6 +51,7 @@ export class RolePermissionsController {
   }
 
   @Patch(':roleId/bulk-update')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Bulk update role permissions' })
   @ApiParam({ name: 'roleId', description: 'Role ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Permissions updated successfully' })
@@ -58,6 +63,7 @@ export class RolePermissionsController {
   }
 
   @Get(':roleId')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'Get role permissions with details' })
   @ApiParam({ name: 'roleId', description: 'Role ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Role permissions retrieved successfully' })
@@ -66,6 +72,7 @@ export class RolePermissionsController {
   }
 
   @Post(':sourceRoleId/copy-to/:targetRoleId')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Copy permissions from one role to another' })
   @ApiParam({ name: 'sourceRoleId', description: 'Source Role ID' })
   @ApiParam({ name: 'targetRoleId', description: 'Target Role ID' })
@@ -78,6 +85,7 @@ export class RolePermissionsController {
   }
 
   @Get('usage')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'Get permission usage across roles' })
   @ApiQuery({ name: 'permission_key', required: false, description: 'Specific permission key to check' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Permission usage retrieved successfully' })

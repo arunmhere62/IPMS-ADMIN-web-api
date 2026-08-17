@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
 import { GoogleLeadsService } from '../google-leads.service';
 import { ResponseUtil } from '../../common/utils/response.util';
 import { ManagementPrismaService } from '../../prisma/management-prisma.service';
+import { RequirePermission } from '../../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../../common/rbac/permissions.catalog';
 
 @Controller('crm/google-leads')
 export class GoogleLeadsController {
@@ -15,6 +17,7 @@ export class GoogleLeadsController {
    * Uses cache: same query+maxPages returns cached results (zero API cost).
    */
   @Get('search')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async search(
     @Query('q') q: string,
     @Query('maxPages') maxPages?: string,
@@ -35,6 +38,7 @@ export class GoogleLeadsController {
    * Sweep an area with multiple keywords and return merged/deduped results.
    */
   @Post('sweep')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async sweep(@Body() body: any) {
     if (!body.area || !body.area.trim()) {
       throw new BadRequestException('area is required');
@@ -58,6 +62,7 @@ export class GoogleLeadsController {
    * Get search history — shows all previously searched queries.
    */
   @Get('history')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async history(@Query('page') page?: string, @Query('limit') limit?: string) {
     const p = Math.max(1, Number(page ?? 1));
     const l = Math.min(50, Math.max(1, Number(limit ?? 20)));
@@ -86,6 +91,7 @@ export class GoogleLeadsController {
    * Import selected Google Places results into crm_contacts.
    */
   @Post('import')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.MANAGE))
   async import(@Body() body: any) {
     if (!body.leads || !Array.isArray(body.leads) || body.leads.length === 0) {
       throw new BadRequestException('leads array is required');
@@ -107,6 +113,7 @@ export class GoogleLeadsController {
    * Uses existing consumer city table + distinct area values from crm_contacts.
    */
   @Get('areas')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async listAreas() {
     const data = await this.googleLeads.listSearchAreas();
     return ResponseUtil.success(data);
@@ -117,6 +124,7 @@ export class GoogleLeadsController {
    * Combines consumer pg_locations, crm_contacts area values, and india-pincode data.
    */
   @Get('areas/:cityId')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async listAreasByCity(@Param('cityId', ParseIntPipe) cityId: number) {
     const data = await this.googleLeads.listSearchAreasByCity(cityId);
     return ResponseUtil.success(data);
@@ -126,6 +134,7 @@ export class GoogleLeadsController {
    * Get states for the initial dropdown.
    */
   @Get('states')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async listStates() {
     const data = await this.googleLeads.listSearchStates();
     return ResponseUtil.success(data);
@@ -135,6 +144,7 @@ export class GoogleLeadsController {
    * Get cities for a selected state.
    */
   @Get('cities')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async listCities(@Query('stateCode') stateCode?: string) {
     const data = await this.googleLeads.listSearchCities(stateCode);
     return ResponseUtil.success(data);
@@ -143,12 +153,14 @@ export class GoogleLeadsController {
   // ─── Keyword Management ────────────────────────────────────────────────────
 
   @Get('keywords')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
   async listKeywords() {
     const keywords = await this.googleLeads.listSearchKeywords();
     return ResponseUtil.success(keywords);
   }
 
   @Post('keywords')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.CREATE))
   async createKeyword(@Body() body: any) {
     if (!body.keyword || !body.keyword.trim()) {
       throw new BadRequestException('Keyword is required');
@@ -158,12 +170,14 @@ export class GoogleLeadsController {
   }
 
   @Post('keywords/seed')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.CREATE))
   async seedKeywords() {
     const result = await this.googleLeads.seedSearchKeywords();
     return ResponseUtil.success(result, `Seeded ${result.created} keywords, ${result.skipped} already existed`);
   }
 
   @Patch('keywords/:id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.UPDATE))
   async updateKeyword(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
     const kw = await this.googleLeads.updateSearchKeyword(id, {
       keyword: body.keyword,
@@ -174,6 +188,7 @@ export class GoogleLeadsController {
   }
 
   @Delete('keywords/:id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.DELETE))
   async deleteKeyword(@Param('id', ParseIntPipe) id: number) {
     await this.googleLeads.deleteSearchKeyword(id);
     return ResponseUtil.success(null, 'Keyword deleted');

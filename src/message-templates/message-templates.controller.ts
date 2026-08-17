@@ -18,6 +18,8 @@ import { CreateMessageTemplateDto } from './dto/create-message-template.dto';
 import { UpdateMessageTemplateDto } from './dto/update-message-template.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('Message Templates')
 @Controller('message-templates')
@@ -25,6 +27,7 @@ export class MessageTemplatesController {
   constructor(private readonly messageTemplatesService: MessageTemplatesService) {}
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGE_TEMPLATES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async findAll(@Query() query: ListMessageTemplatesDto) {
@@ -32,6 +35,7 @@ export class MessageTemplatesController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGE_TEMPLATES.VIEW))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async findOne(@Param('id', ParseIntPipe) id: number) {
@@ -39,6 +43,7 @@ export class MessageTemplatesController {
   }
 
   @Post()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGE_TEMPLATES.CREATE))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async create(@Body() dto: CreateMessageTemplateDto) {
@@ -46,6 +51,7 @@ export class MessageTemplatesController {
   }
 
   @Put(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGE_TEMPLATES.UPDATE))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async update(
@@ -56,6 +62,7 @@ export class MessageTemplatesController {
   }
 
   @Delete(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGE_TEMPLATES.DELETE))
   @UseGuards(HeadersValidationGuard)
   @RequireHeaders({ user_id: true })
   async remove(@Param('id', ParseIntPipe) id: number) {

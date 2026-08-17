@@ -18,6 +18,8 @@ import { UpdateVersionDto } from './dto/update-version.dto';
 import { UpdateAppSettingsDto } from './dto/update-app-settings.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('app-settings')
 @Controller('app-settings')
@@ -29,12 +31,14 @@ export class AppSettingsController {
   // ─── App Settings ───
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'Get app settings (maintenance mode, versions, announcements)' })
   async getAppSettings() {
     return this.appSettingsService.getAppSettings();
   }
 
   @Patch()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.UPDATE))
   @ApiOperation({ summary: 'Update app settings' })
   async updateAppSettings(@Body() dto: UpdateAppSettingsDto, @Req() req: any) {
     const userId = req.validatedHeaders?.user_id;
@@ -44,6 +48,7 @@ export class AppSettingsController {
   // ─── Version History ───
 
   @Get('versions')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'List all app versions with pagination' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -64,12 +69,14 @@ export class AppSettingsController {
   }
 
   @Get('versions/:id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'Get a specific version by ID' })
   async getVersion(@Param('id', ParseIntPipe) id: number) {
     return this.appSettingsService.getVersionById(id);
   }
 
   @Post('versions')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.MANAGE))
   @ApiOperation({ summary: 'Create a new app version entry' })
   async createVersion(@Body() dto: CreateVersionDto, @Req() req: any) {
     const userId = req.validatedHeaders?.user_id;
@@ -77,6 +84,7 @@ export class AppSettingsController {
   }
 
   @Patch('versions/:id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.UPDATE))
   @ApiOperation({ summary: 'Update an app version entry' })
   async updateVersion(
     @Param('id', ParseIntPipe) id: number,
@@ -88,6 +96,7 @@ export class AppSettingsController {
   }
 
   @Delete('versions/:id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.MANAGE))
   @ApiOperation({ summary: 'Delete an app version entry' })
   async deleteVersion(@Param('id', ParseIntPipe) id: number) {
     return this.appSettingsService.deleteVersion(id);
@@ -96,6 +105,7 @@ export class AppSettingsController {
   // ─── Activity Logs (read-only) ───
 
   @Get('activity-logs')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'List activity logs with filters' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -125,6 +135,7 @@ export class AppSettingsController {
   }
 
   @Get('activity-stats')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'Get aggregated activity stats' })
   async getActivityStats() {
     return this.appSettingsService.getActivityStats();
@@ -133,12 +144,14 @@ export class AppSettingsController {
   // ─── Filter Data (for dropdowns) ───
 
   @Get('filters/organizations')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'List organizations for filter dropdown' })
   async listOrganizationsForFilter() {
     return this.appSettingsService.listOrganizationsForFilter();
   }
 
   @Get('filters/pg-locations')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
   @ApiOperation({ summary: 'List PG locations for filter dropdown' })
   @ApiQuery({ name: 'organization_id', required: false, type: Number })
   async listPgLocationsForFilter(

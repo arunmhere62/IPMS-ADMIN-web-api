@@ -6,6 +6,8 @@ import { CommonHeaders, CommonHeadersDecorator } from '../common/decorators/comm
 import { TicketsService } from './tickets.service';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { AddTicketCommentDto } from './dto/add-ticket-comment.dto';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('tickets')
 @Controller('tickets')
@@ -15,6 +17,7 @@ export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.TICKETS.VIEW))
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'List tickets (product team)' })
   @ApiQuery({ name: 'page', required: false, type: Number })
@@ -46,6 +49,7 @@ export class TicketsController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.TICKETS.VIEW))
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get ticket by ID (product team)' })
   @ApiParam({ name: 'id', type: Number })
@@ -56,6 +60,7 @@ export class TicketsController {
   }
 
   @Patch(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.TICKETS.UPDATE))
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update ticket (status/resolution) (product team)' })
   @ApiParam({ name: 'id', type: Number })
@@ -65,6 +70,7 @@ export class TicketsController {
   }
 
   @Post(':id/comments')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.TICKETS.UPDATE))
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Add comment to ticket (product team)' })
   @ApiParam({ name: 'id', type: Number })

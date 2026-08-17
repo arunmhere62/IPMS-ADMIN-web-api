@@ -3,6 +3,8 @@ import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/
 import { OrganizationsService } from './organizations.service';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('organizations')
 @Controller('organizations')
@@ -12,6 +14,7 @@ export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'List organizations with PG and resource counts' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -44,6 +47,7 @@ export class OrganizationsController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'Get organization details with per-PG counts' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Organization fetched successfully' })
@@ -53,6 +57,7 @@ export class OrganizationsController {
   }
 
   @Get(':orgId/pg/:pgId')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'Get PG location details with rooms, beds, tenants, and employees' })
   @ApiParam({ name: 'orgId', type: Number })
   @ApiParam({ name: 'pgId', type: Number })
@@ -66,6 +71,7 @@ export class OrganizationsController {
   }
 
   @Post(':id/reactivate')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.UPDATE))
   @ApiOperation({ summary: 'Reactivate a deleted/inactive organization and its super admin' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Organization reactivated successfully' })
@@ -75,6 +81,7 @@ export class OrganizationsController {
   }
 
   @Post(':id/delete')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.DELETE))
   @ApiOperation({ summary: 'Soft delete an active organization and its super admin' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Organization deleted successfully' })

@@ -6,6 +6,8 @@ import { UpdatePermissionDto } from './dto/update-permission.dto';
 import { BulkUpsertPermissionsDto } from './dto/bulk-permissions.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('permissions')
 @Controller('permissions')
@@ -15,6 +17,7 @@ export class PermissionsController {
   constructor(private readonly service: PermissionsService) {}
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'List permissions' })
   @ApiResponse({ status: 200, description: 'Permissions fetched successfully' })
   findAll() {
@@ -22,6 +25,7 @@ export class PermissionsController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'Get permission by id' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Permission fetched successfully' })
@@ -31,6 +35,7 @@ export class PermissionsController {
   }
 
   @Post()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Create permission' })
   @ApiResponse({ status: 201, description: 'Permission created successfully' })
   create(@Body() dto: CreatePermissionDto) {
@@ -38,6 +43,7 @@ export class PermissionsController {
   }
 
   @Post('bulk')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Bulk upsert permissions for a screen' })
   @ApiResponse({ status: 200, description: 'Permissions upserted successfully' })
   bulkUpsert(@Body() dto: BulkUpsertPermissionsDto) {
@@ -45,6 +51,7 @@ export class PermissionsController {
   }
 
   @Patch(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Update permission' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Permission updated successfully' })
@@ -54,6 +61,7 @@ export class PermissionsController {
   }
 
   @Delete(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Delete permission (hard delete)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 204, description: 'Permission deleted successfully' })

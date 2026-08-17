@@ -5,6 +5,8 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('roles')
 @Controller('roles')
@@ -14,6 +16,7 @@ export class RolesController {
   constructor(private readonly service: RolesService) {}
 
   @Post()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Create role' })
   @ApiResponse({ status: 201, description: 'Role created successfully' })
   create(@Body() dto: CreateRoleDto) {
@@ -21,6 +24,7 @@ export class RolesController {
   }
 
   @Get()
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'List roles' })
   @ApiResponse({ status: 200, description: 'Roles fetched successfully' })
   findAll() {
@@ -28,6 +32,7 @@ export class RolesController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'Get role by id' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Role fetched successfully' })
@@ -37,6 +42,7 @@ export class RolesController {
   }
 
   @Patch(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Update role' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Role updated successfully' })
@@ -46,6 +52,7 @@ export class RolesController {
   }
 
   @Delete(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Soft delete role (sets is_deleted=true)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Role deleted successfully' })

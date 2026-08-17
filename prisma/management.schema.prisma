@@ -185,7 +185,7 @@ model crm_subscribers {
   @@index([user_id], map: "idx_crm_subscriber_user")
 }
 
-model organization {
+model sales_organization {
   s_no        Int                 @id @default(autoincrement())
   name        String              @db.VarChar(150)
   description String?             @db.Text
@@ -239,13 +239,59 @@ model otp_request {
 }
 
 model role {
-  s_no        Int      @id @default(autoincrement())
-  name        String   @unique(map: "role_name_unique") @db.VarChar(50)
-  description String?  @db.VarChar(255)
-  is_active   Boolean  @default(true)
-  created_at  DateTime @default(now()) @db.DateTime(0)
-  updated_at  DateTime @default(now()) @db.DateTime(0)
-  user        user[]
+  s_no             Int               @id @default(autoincrement())
+  name             String            @unique(map: "role_name_unique") @db.VarChar(50)
+  description      String?           @db.VarChar(255)
+  is_active        Boolean           @default(true)
+  is_system        Boolean           @default(false)
+  created_at       DateTime          @default(now()) @db.DateTime(0)
+  updated_at       DateTime          @default(now()) @db.DateTime(0)
+  role_permissions role_permission[]
+  user             user[]
+}
+
+model permission {
+  s_no                      Int                        @id @default(autoincrement())
+  resource                  String                     @db.VarChar(50)
+  action                    String                     @db.VarChar(50)
+  description               String?                    @db.VarChar(255)
+  is_active                 Boolean                    @default(true)
+  created_at                DateTime                   @default(now()) @db.DateTime(0)
+  updated_at                DateTime                   @default(now()) @db.DateTime(0)
+  role_permissions          role_permission[]
+  user_permission_overrides user_permission_override[]
+
+  @@unique([resource, action], map: "permission_resource_action_unique")
+  @@index([resource], map: "idx_permission_resource")
+}
+
+model role_permission {
+  s_no          Int        @id @default(autoincrement())
+  role_id       Int
+  permission_id Int
+  created_at    DateTime   @default(now()) @db.DateTime(0)
+  permission    permission @relation(fields: [permission_id], references: [s_no], onDelete: Cascade, map: "fk_role_permission_permission")
+  role          role       @relation(fields: [role_id], references: [s_no], onDelete: Cascade, map: "fk_role_permission_role")
+
+  @@unique([role_id, permission_id], map: "role_permission_unique")
+  @@index([role_id], map: "idx_role_permission_role")
+  @@index([permission_id], map: "idx_role_permission_permission")
+}
+
+model user_permission_override {
+  s_no          Int        @id @default(autoincrement())
+  user_id       Int
+  permission_id Int
+  granted       Boolean    @default(true)
+  reason        String?    @db.VarChar(255)
+  created_at    DateTime   @default(now()) @db.DateTime(0)
+  updated_at    DateTime   @default(now()) @db.DateTime(0)
+  permission    permission @relation(fields: [permission_id], references: [s_no], onDelete: Cascade, map: "fk_user_permission_override_permission")
+  user          user       @relation(fields: [user_id], references: [s_no], onDelete: Cascade, map: "fk_user_permission_override_user")
+
+  @@unique([user_id, permission_id], map: "user_permission_override_unique")
+  @@index([user_id], map: "idx_user_permission_override_user")
+  @@index([permission_id], map: "idx_user_permission_override_permission")
 }
 
 model session {
@@ -264,25 +310,26 @@ model session {
 }
 
 model user {
-  s_no                Int                   @id @default(autoincrement())
-  email               String?               @unique @db.VarChar(255)
-  phone               String?               @unique @db.VarChar(32)
-  name                String?               @db.VarChar(255)
-  organization_id     Int?
-  role_id             Int?
-  is_active           Boolean               @default(true)
-  created_at          DateTime              @default(now()) @db.DateTime(0)
-  updated_at          DateTime              @default(now()) @db.DateTime(0)
-  crm_import_batches  crm_import_batches[]
-  crm_lead_activities crm_lead_activities[]
-  crm_leads           crm_leads[]
-  crm_site_visits     crm_site_visits[]
-  crm_subscribers     crm_subscribers[]
-  otp_attempt         otp_attempt[]
-  otp_request         otp_request[]
-  session             session[]
-  organization        organization?         @relation(fields: [organization_id], references: [s_no], onUpdate: NoAction, map: "fk_user_org")
-  role                role?                 @relation(fields: [role_id], references: [s_no], onUpdate: NoAction, map: "fk_user_role")
+  s_no                      Int                        @id @default(autoincrement())
+  email                     String?                    @unique @db.VarChar(255)
+  phone                     String?                    @unique @db.VarChar(32)
+  name                      String?                    @db.VarChar(255)
+  organization_id           Int?
+  role_id                   Int?
+  is_active                 Boolean                    @default(true)
+  created_at                DateTime                   @default(now()) @db.DateTime(0)
+  updated_at                DateTime                   @default(now()) @db.DateTime(0)
+  crm_import_batches        crm_import_batches[]
+  crm_lead_activities       crm_lead_activities[]
+  crm_leads                 crm_leads[]
+  crm_site_visits           crm_site_visits[]
+  crm_subscribers           crm_subscribers[]
+  otp_attempt               otp_attempt[]
+  otp_request               otp_request[]
+  session                   session[]
+  sales_organization        sales_organization?        @relation(fields: [organization_id], references: [s_no], onUpdate: NoAction, map: "fk_user_org")
+  role                      role?                      @relation(fields: [role_id], references: [s_no], onUpdate: NoAction, map: "fk_user_role")
+  user_permission_overrides user_permission_override[]
 
   @@index([organization_id], map: "idx_user_org")
   @@index([role_id], map: "idx_user_role")

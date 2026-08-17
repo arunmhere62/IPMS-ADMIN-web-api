@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHmac } from 'crypto';
 import { ManagementPrismaService } from '../prisma/management-prisma.service';
 import { ResponseUtil } from '../common/utils/response.util';
+import { RbacService } from '../common/rbac/rbac.service';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SmsService } from './sms.service';
@@ -20,6 +21,7 @@ export class AuthService {
     private readonly managementPrisma: ManagementPrismaService,
     private readonly jwtService: JwtService,
     private readonly smsService: SmsService,
+    private readonly rbacService: RbacService,
   ) {}
 
   private normalizePhone(phone: string) {
@@ -172,10 +174,10 @@ export class AuthService {
       this.managementPrisma.role.findUnique({ where: { name: 'SALES_REP' } }),
     ]);
 
-    // Ensure default organization exists
-    let defaultOrg = await this.managementPrisma.organization.findFirst({ where: { name: defaultOrgName } });
+    // Ensure default sales organization exists
+    let defaultOrg = await this.managementPrisma.sales_organization.findFirst({ where: { name: defaultOrgName } });
     if (!defaultOrg) {
-      defaultOrg = await this.managementPrisma.organization.create({
+      defaultOrg = await this.managementPrisma.sales_organization.create({
         data: { name: defaultOrgName, status: 'ACTIVE' as any },
       });
     }
@@ -204,14 +206,17 @@ export class AuthService {
     // Re-fetch with relations for response
     const fullUser = await this.managementPrisma.user.findUnique({
       where: { s_no: updatedUser.s_no },
-      include: { organization: true, role: true },
+      include: { sales_organization: true, role: true },
     });
+
+    const permissions = await this.rbacService.getUserPermissions(fullUser?.s_no ?? 0);
 
     const accessToken = await this.jwtService.signAsync({
       sub: fullUser?.s_no,
       phone: fullUser?.phone,
       email: fullUser?.email,
       role: fullUser?.role?.name,
+      permissions: Array.from(permissions),
       organization_id: fullUser?.organization_id,
     });
 
@@ -240,7 +245,8 @@ export class AuthService {
           email: fullUser?.email,
           phone: fullUser?.phone,
           role: fullUser?.role?.name,
-          organization: fullUser?.organization ? { s_no: fullUser.organization.s_no, name: fullUser.organization.name } : null,
+          permissions: Array.from(permissions),
+          organization: fullUser?.sales_organization ? { s_no: fullUser.sales_organization.s_no, name: fullUser.sales_organization.name } : null,
         },
         accessToken,
         refreshToken,
