@@ -36,6 +36,7 @@ model crm_contacts {
   updated_at         DateTime            @default(now()) @db.DateTime(0)
   is_deleted         Boolean             @default(false)
   deleted_at         DateTime?           @db.DateTime(0)
+  google_place_id    String?             @db.VarChar(255)
   crm_import_batches crm_import_batches? @relation(fields: [import_batch_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_contact_batch")
   crm_leads          crm_leads?
   crm_site_visits    crm_site_visits[]
@@ -48,6 +49,7 @@ model crm_contacts {
   @@index([source], map: "idx_crm_contact_source")
   @@index([state_id], map: "idx_crm_contact_state_id")
   @@index([status], map: "idx_crm_contact_status")
+  @@index([google_place_id], map: "idx_crm_contact_google_place_id")
 }
 
 model crm_import_batches {
@@ -298,6 +300,31 @@ model crm_lead_stages {
   created_at DateTime?   @default(now()) @db.Timestamp(0)
   updated_at DateTime?   @default(now()) @db.Timestamp(0)
   crm_leads  crm_leads[]
+}
+
+model crm_search_keywords {
+  s_no       Int      @id @default(autoincrement())
+  keyword    String   @unique(map: "uk_crm_search_keyword") @db.VarChar(100)
+  is_active  Boolean  @default(true)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.DateTime(0)
+
+  @@index([is_active], map: "idx_crm_search_keyword_active")
+}
+
+model crm_google_search_cache {
+  s_no         Int      @id @default(autoincrement())
+  query        String   @db.VarChar(255)
+  max_pages    Int      @default(1)
+  total        Int      @default(0)
+  new_count    Int      @default(0)
+  api_calls    Int      @default(0)
+  results_json String   @db.LongText
+  searched_by  Int?
+  created_at   DateTime @default(now()) @db.DateTime(0)
+
+  @@index([created_at], map: "idx_google_search_created")
+  @@index([query], map: "idx_google_search_query")
 }
 
 enum crm_lead_activities_type {
