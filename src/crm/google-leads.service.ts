@@ -10,12 +10,24 @@ interface GooglePlace {
   id: string;
   displayName?: { text: string; languageCode: string };
   formattedAddress?: string;
+  shortFormattedAddress?: string;
   googleMapsUri?: string;
   nationalPhoneNumber?: string;
   internationalPhoneNumber?: string;
   rating?: number;
+  userRatingCount?: number;
   websiteUri?: string;
   types?: string[];
+  primaryType?: string;
+  primaryTypeDisplayName?: { text: string; languageCode: string };
+  businessStatus?: string;
+  location?: { latitude: number; longitude: number };
+  addressComponents?: Array<{
+    longText: string;
+    shortText: string;
+    types: string[];
+    languageCode: string;
+  }>;
 }
 
 interface TextSearchResponse {
@@ -31,8 +43,13 @@ export interface GoogleLeadResult {
   address: string | null;
   google_maps_url: string | null;
   google_rating: number | null;
+  google_rating_count: number | null;
   website: string | null;
   place_types: string[];
+  primary_type: string | null;
+  business_status: string | null;
+  latitude: number | null;
+  longitude: number | null;
   already_imported: boolean;
   existing_contact_id: number | null;
   duplicate_reason: string | null;
@@ -71,17 +88,35 @@ const FIELD_MASK = [
   'places.id',
   'places.displayName',
   'places.formattedAddress',
+  'places.shortFormattedAddress',
   'places.googleMapsUri',
   'places.nationalPhoneNumber',
   'places.internationalPhoneNumber',
   'places.rating',
+  'places.userRatingCount',
   'places.websiteUri',
   'places.types',
+  'places.primaryType',
+  'places.primaryTypeDisplayName',
+  'places.businessStatus',
+  'places.location',
+  'places.addressComponents',
   'nextPageToken',
 ].join(',');
 
 const MAX_PAGES = 8; // Google allows up to 8 pages × 20 = 160 results per query
 const PAGE_SIZE = 20;
+
+// ─── Cost Control Limits ─────────────────────────────────────────────────────
+
+const MAX_QUERY_LENGTH = 200;
+const MIN_QUERY_LENGTH = 3;
+const MAX_KEYWORDS_PER_SWEEP = 20;
+const MAX_LEADS_PER_IMPORT = 500;
+const MAX_AREA_LENGTH = 150;
+// Daily API call budget — configurable via env. Default: 1000 calls/day
+// At 8 calls/search, that's ~125 searches/day — plenty for normal usage
+const DAILY_API_BUDGET = Number(process.env.GOOGLE_PLACES_DAILY_LIMIT ?? '1000');
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
@@ -94,12 +129,48 @@ export class GoogleLeadsService {
     private readonly consumerPrisma: ConsumerPrismaService,
   ) {}
 
+  /**
+   * Check if the daily Google API call budget has been exceeded.
+   * Counts all API calls made today from the search cache table.
+   */
+  private async checkDailyApiBudget(callsRequested: number): Promise<void> {
+    if (DAILY_API_BUDGET <= 0) return; // 0 = unlimited
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const todayStats = await this.prisma.crm_google_search_cache.aggregate({
+      where: { created_at: { gte: startOfDay } },
+      _sum: { api_calls: true },
+    });
+
+    const usedToday = todayStats._sum.api_calls ?? 0;
+    if (usedToday + callsRequested > DAILY_API_BUDGET) {
+      throw new BadRequestException(
+        `Daily Google API call budget exceeded. Used ${usedToday}/${DAILY_API_BUDGET} calls today. ` +
+        `This request needs ${callsRequested} more. Try again tomorrow or ask admin to increase GOOGLE_PLACES_DAILY_LIMIT.`,
+      );
+    }
+  }
+
   private getApiKey(): string {
     const key = process.env.GOOGLE_MAPS_API_KEY;
     if (!key) {
       throw new BadRequestException('GOOGLE_MAPS_API_KEY is not configured on the server');
     }
     return key;
+  }
+
+  /**
+   * Quick check if a query+maxPages combo is already cached.
+   * Used to skip the daily budget check for cache hits.
+   */
+  private async isQueryCached(query: string, maxPages: number): Promise<boolean> {
+    const cached = await this.prisma.crm_google_search_cache.findFirst({
+      where: { query, max_pages: maxPages },
+      select: { s_no: true },
+    });
+    return !!cached;
   }
 
   /**
@@ -114,7 +185,21 @@ export class GoogleLeadsService {
     searchedBy?: number,
     phoneOnly: boolean = false,
   ): Promise<SearchGoogleLeadsResult> {
+    // ─── Validate query ───
+    const query = textQuery.trim();
+    if (query.length < MIN_QUERY_LENGTH) {
+      throw new BadRequestException(`Search query must be at least ${MIN_QUERY_LENGTH} characters`);
+    }
+    if (query.length > MAX_QUERY_LENGTH) {
+      throw new BadRequestException(`Search query must be at most ${MAX_QUERY_LENGTH} characters`);
+    }
+
     const pagesToFetch = Math.min(maxPages, MAX_PAGES);
+
+    // ─── Check daily API budget (only for fresh searches, not cache hits) ───
+    if (forceRefresh || !(await this.isQueryCached(query, pagesToFetch))) {
+      await this.checkDailyApiBudget(pagesToFetch);
+    }
 
     // ─── Check cache first ───
     if (!forceRefresh) {
@@ -303,8 +388,13 @@ export class GoogleLeadsService {
         address: place.formattedAddress ?? null,
         google_maps_url: place.googleMapsUri ?? null,
         google_rating: place.rating ?? null,
+        google_rating_count: place.userRatingCount ?? null,
         website: place.websiteUri ?? null,
         place_types: place.types ?? [],
+        primary_type: place.primaryTypeDisplayName?.text ?? place.primaryType ?? null,
+        business_status: place.businessStatus ?? null,
+        latitude: place.location?.latitude ?? null,
+        longitude: place.location?.longitude ?? null,
         already_imported: alreadyImported,
         existing_contact_id: existingContactId,
         duplicate_reason: duplicateReason,
@@ -364,13 +454,31 @@ export class GoogleLeadsService {
     phoneOnly: boolean = false,
     searchedBy?: number,
   ): Promise<SearchGoogleLeadsResult> {
-    const uniqueKeywords = [...new Set(keywords.map((k) => k.trim()).filter(Boolean))];
-    if (!area?.trim() || uniqueKeywords.length === 0) {
-      throw new BadRequestException('Area and at least one keyword are required');
+    const trimmedArea = area?.trim() ?? '';
+    if (!trimmedArea) {
+      throw new BadRequestException('Area is required');
+    }
+    if (trimmedArea.length > MAX_AREA_LENGTH) {
+      throw new BadRequestException(`Area name must be at most ${MAX_AREA_LENGTH} characters`);
+    }
+
+    const uniqueKeywords = [...new Set(keywords.map((k) => k?.trim() ?? '').filter(Boolean))];
+    if (uniqueKeywords.length === 0) {
+      throw new BadRequestException('At least one keyword is required');
+    }
+    if (uniqueKeywords.length > MAX_KEYWORDS_PER_SWEEP) {
+      throw new BadRequestException(
+        `Too many keywords: ${uniqueKeywords.length}. Maximum ${MAX_KEYWORDS_PER_SWEEP} keywords per sweep to control API costs.`,
+      );
     }
 
     const pages = Math.min(Math.max(maxPages, 1), MAX_PAGES);
-    const queries = uniqueKeywords.map((kw) => `${kw} ${area.trim()}`);
+    const queries = uniqueKeywords.map((kw) => `${kw} ${trimmedArea}`);
+
+    // Pre-check daily budget for the entire sweep (worst case: all fresh searches)
+    // Cache hits won't count, but we check upfront to prevent partial sweeps
+    const maxPossibleCalls = uniqueKeywords.length * pages;
+    await this.checkDailyApiBudget(maxPossibleCalls);
 
     const perQuery = await Promise.all(
       queries.map((q) => this.searchGoogleLeads(q, pages, false, searchedBy, phoneOnly)),
@@ -415,6 +523,73 @@ export class GoogleLeadsService {
   }
 
   /**
+   * Parse a Google formattedAddress to extract city, state, and area.
+   * Google format: "PG Name, Street, Area, City, State PIN, India"
+   * Returns resolved IDs from consumer DB.
+   */
+  private parseAddressForLocation(
+    address: string,
+    cityByName: Map<string, { s_no: number; name: string; state_code: string }>,
+    stateByName: Map<string, { s_no: number; name: string; iso_code: string }>,
+    stateByCode: Map<string, { s_no: number; name: string; iso_code: string }>,
+  ): { cityId: number | null; stateId: number | null; area: string | null } {
+    // Split by commas and clean up
+    const parts = address.split(',').map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return { cityId: null, stateId: null, area: null };
+
+    let cityId: number | null = null;
+    let stateId: number | null = null;
+    let area: string | null = null;
+
+    // Scan parts from the end (India, State+PIN, City, Area, ...)
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      const partLower = part.toLowerCase();
+
+      // Skip "India"
+      if (partLower === 'india' || partLower === 'in') continue;
+
+      // Check if this part is a state (with optional PIN code)
+      // Google format: "Tamil Nadu 600001" or "Tamil Nadu"
+      const stateMatch = part.match(/^(.+?)\s*\d{6}$/);
+      const stateName = stateMatch ? stateMatch[1].trim() : part;
+      const stateLower = stateName.toLowerCase();
+
+      if (!stateId) {
+        const state = stateByName.get(stateLower) ?? stateByCode.get(stateLower);
+        if (state) {
+          stateId = state.s_no;
+          continue;
+        }
+      }
+
+      // Check if this part is a city
+      if (!cityId) {
+        const city = cityByName.get(partLower);
+        if (city) {
+          cityId = city.s_no;
+          // Also resolve state from city's state_code if not already found
+          if (!stateId) {
+            const s = stateByCode.get(city.state_code.toLowerCase());
+            if (s) stateId = s.s_no;
+          }
+          continue;
+        }
+      }
+
+      // First non-city, non-state, non-country part from the end is likely the area
+      if (!area && partLower !== 'india') {
+        // Skip PIN-only parts
+        if (!/^\d{6}$/.test(part)) {
+          area = part;
+        }
+      }
+    }
+
+    return { cityId, stateId, area };
+  }
+
+  /**
    * Import selected Google Places results into crm_contacts.
    * Deduplicates by google_place_id and phone number.
    */
@@ -427,6 +602,12 @@ export class GoogleLeadsService {
       google_maps_url?: string | null;
       google_rating?: number | null;
       website?: string | null;
+      place_types?: string[] | null;
+      primary_type?: string | null;
+      business_status?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+      google_rating_count?: number | null;
     }>,
     importedBy?: number,
   ): Promise<ImportGoogleLeadsResult> {
@@ -441,6 +622,12 @@ export class GoogleLeadsService {
 
     if (!leads.length) {
       return result;
+    }
+    if (leads.length > MAX_LEADS_PER_IMPORT) {
+      throw new BadRequestException(
+        `Too many leads: ${leads.length}. Maximum ${MAX_LEADS_PER_IMPORT} leads per import. ` +
+        `Please split into smaller batches.`,
+      );
     }
 
     // Create an import batch for tracking
@@ -470,27 +657,26 @@ export class GoogleLeadsService {
     const existingPlaceIds = new Set(existing.map((c) => c.google_place_id).filter(Boolean));
     const existingPhones = new Set(existing.map((c) => c.phone).filter(Boolean));
 
-    // Resolve Chennai city/state/country from consumer DB
-    let chennaiCity: { city_id: number; state_id: number; country_id: number } | null = null;
-    const city = await this.consumerPrisma.city.findFirst({
-      where: { name: { equals: 'Chennai' } },
-      select: { s_no: true, state_code: true, country_code: true },
+    // Pre-fetch all Indian states and cities from consumer DB for fast lookup
+    const allStates = await this.consumerPrisma.state.findMany({
+      where: { country_code: 'IN' },
+      select: { s_no: true, name: true, iso_code: true },
     });
-    if (city) {
-      const state = await this.consumerPrisma.state.findFirst({
-        where: { iso_code: city.state_code },
-        select: { s_no: true },
-      });
-      const country = await this.consumerPrisma.country.findFirst({
-        where: { iso_code: city.country_code },
-        select: { s_no: true },
-      });
-      chennaiCity = {
-        city_id: city.s_no,
-        state_id: state?.s_no ?? null,
-        country_id: country?.s_no ?? null,
-      };
-    }
+    const stateByName = new Map(allStates.map((s) => [s.name.toLowerCase(), s]));
+    const stateByCode = new Map(allStates.map((s) => [s.iso_code.toLowerCase(), s]));
+
+    const allCities = await this.consumerPrisma.city.findMany({
+      where: { country_code: 'IN' },
+      select: { s_no: true, name: true, state_code: true },
+    });
+    const cityByName = new Map(allCities.map((c) => [c.name.toLowerCase(), c]));
+
+    // India country
+    const indiaCountry = await this.consumerPrisma.country.findFirst({
+      where: { iso_code: 'IN' },
+      select: { s_no: true },
+    });
+    const indiaCountryId = indiaCountry?.s_no ?? null;
 
     for (const lead of leads) {
       try {
@@ -509,6 +695,18 @@ export class GoogleLeadsService {
         if (lead.google_place_id) existingPlaceIds.add(lead.google_place_id);
         if (normalizedPhone) existingPhones.add(normalizedPhone);
 
+        // Parse city/state from address (Google formattedAddress ends with "City, State PIN, India")
+        let resolvedCityId: number | null = null;
+        let resolvedStateId: number | null = null;
+        let resolvedArea: string | null = null;
+
+        if (lead.address) {
+          const parsed = this.parseAddressForLocation(lead.address, cityByName, stateByName, stateByCode);
+          resolvedCityId = parsed.cityId;
+          resolvedStateId = parsed.stateId;
+          resolvedArea = parsed.area;
+        }
+
         await this.prisma.crm_contacts.create({
           data: {
             pg_name: lead.pg_name.trim(),
@@ -521,9 +719,16 @@ export class GoogleLeadsService {
             source: 'GOOGLE',
             status: 'NEW',
             import_batch_id: batch.s_no,
-            city_id: chennaiCity?.city_id ?? null,
-            state_id: chennaiCity?.state_id ?? null,
-            country_id: chennaiCity?.country_id ?? null,
+            city_id: resolvedCityId,
+            state_id: resolvedStateId,
+            country_id: indiaCountryId,
+            area: resolvedArea,
+            place_types: lead.place_types?.length ? lead.place_types.join(',') : null,
+            primary_type: lead.primary_type ?? null,
+            business_status: lead.business_status ?? null,
+            latitude: lead.latitude ?? null,
+            longitude: lead.longitude ?? null,
+            google_rating_count: lead.google_rating_count ?? null,
           },
         });
 

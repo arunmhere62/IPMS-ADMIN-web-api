@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHmac } from 'crypto';
 import { ManagementPrismaService } from '../prisma/management-prisma.service';
@@ -7,15 +7,18 @@ import { RbacService } from '../common/rbac/rbac.service';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { SmsService } from './sms.service';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger('AuthService');
   private readonly otpExpiryMinutes = Number(process.env.WEB_AUTH_OTP_EXPIRY_MINUTES ?? 5);
   private readonly otpLength = Number(process.env.WEB_AUTH_OTP_LENGTH ?? 4);
   private readonly otpMaxAttempts = Number(process.env.WEB_AUTH_OTP_MAX_ATTEMPTS ?? 5);
   private readonly otpSecret = process.env.WEB_AUTH_OTP_SECRET ?? 'web-auth-otp-secret';
 
   private readonly refreshTokenDays = Number(process.env.WEB_AUTH_REFRESH_DAYS ?? 30);
+  private readonly refreshSecret = process.env.WEB_AUTH_REFRESH_SECRET ?? process.env.JWT_REFRESH_SECRET ?? this.otpSecret;
 
   constructor(
     private readonly managementPrisma: ManagementPrismaService,
@@ -47,6 +50,64 @@ export class AuthService {
       .digest('hex');
   }
 
+  // ─── Token & Session helpers ───
+
+  private hashRefreshToken(token: string): string {
+    return createHmac('sha256', this.refreshSecret).update(token).digest('hex');
+  }
+
+  private generateRefreshToken(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private async issueTokens(
+    user: { s_no: number; phone?: string | null; email?: string | null; role?: { name: string } | null; organization_id?: number | null },
+    permissions: Set<string>,
+    requestMeta?: { ip?: string; userAgent?: string },
+  ): Promise<{ accessToken: string; refreshToken: string; sessionSNo: number }> {
+    const now = new Date();
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.s_no,
+      phone: user.phone,
+      email: user.email,
+      role: user.role?.name,
+      permissions: Array.from(permissions),
+      organization_id: user.organization_id,
+    });
+
+    const refreshToken = this.generateRefreshToken();
+    const refreshTokenHash = this.hashRefreshToken(refreshToken);
+    const refreshExpiresAt = new Date(now.getTime() + this.refreshTokenDays * 24 * 60 * 60 * 1000);
+
+    const session = await this.managementPrisma.session.create({
+      data: {
+        user_s_no: user.s_no,
+        refresh_token_hash: refreshTokenHash,
+        expires_at: refreshExpiresAt,
+        ip_address: requestMeta?.ip,
+        user_agent: requestMeta?.userAgent,
+      },
+    });
+
+    return { accessToken, refreshToken, sessionSNo: session.s_no };
+  }
+
+  private async revokeSession(sessionSNo: number): Promise<void> {
+    await this.managementPrisma.session.updateMany({
+      where: { s_no: sessionSNo, revoked_at: null },
+      data: { revoked_at: new Date() },
+    });
+  }
+
+  private async findSessionByRefreshToken(refreshToken: string) {
+    const tokenHash = this.hashRefreshToken(refreshToken);
+    return this.managementPrisma.session.findFirst({
+      where: { refresh_token_hash: tokenHash, revoked_at: null },
+      include: { user: { include: { role: true, sales_organization: true } } },
+    });
+  }
+
   async sendOtp(dto: SendOtpDto, requestMeta?: { ip?: string; userAgent?: string }) {
     const phone = this.normalizePhone(dto.phone);
     if (!phone) {
@@ -65,9 +126,15 @@ export class AuthService {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + this.otpExpiryMinutes * 60 * 1000);
 
-    const smsSent = await this.smsService.sendOtp(phone, otp);
-    if (!smsSent) {
-      throw new BadRequestException('Failed to send OTP. Please try again.');
+    // In dev mode, skip SMS and log the OTP + bypass code
+    const isDevMode = process.env.NODE_ENV !== 'production';
+    if (isDevMode) {
+      this.logger.warn(`[DEV] OTP for ${phone}: ${otp} (or use bypass code: 5555)`);
+    } else {
+      const smsSent = await this.smsService.sendOtp(phone, otp);
+      if (!smsSent) {
+        throw new BadRequestException('Failed to send OTP. Please try again.');
+      }
     }
 
     const created = await this.managementPrisma.otp_request.create({
@@ -113,6 +180,32 @@ export class AuthService {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // ─── Dev mode OTP bypass ───
+    // When NODE_ENV is not production, accept 5555 as a bypass OTP
+    // This allows testing without receiving real SMS
+    const isDevMode = process.env.NODE_ENV !== 'production';
+    const DEV_BYPASS_OTP = '5555';
+
+    if (isDevMode && otp === DEV_BYPASS_OTP) {
+      this.logger.warn(`[DEV] Bypass OTP 5555 used for ${phone} — login allowed without SMS verification`);
+
+      // Mark the most recent OTP request as consumed (if exists)
+      const now = new Date();
+      const recentRequest = await this.managementPrisma.otp_request.findFirst({
+        where: { identifier: phone, purpose: 'WEB_LOGIN' },
+        orderBy: { created_at: 'desc' },
+      });
+      if (recentRequest && !recentRequest.consumed_at) {
+        await this.managementPrisma.otp_request.update({
+          where: { s_no: recentRequest.s_no },
+          data: { consumed_at: now, attempt_count: { increment: 1 } },
+        });
+      }
+
+      // Skip OTP hash verification — proceed directly to login
+      return this.completeLogin(user, requestMeta);
     }
 
     const now = new Date();
@@ -165,6 +258,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired OTP');
     }
 
+    return this.completeLogin(user, requestMeta);
+  }
+
+  /**
+   * Complete the login flow after OTP is verified.
+   * Ensures org/role are set, issues tokens, returns user + tokens.
+   * Shared between normal OTP verification and dev bypass.
+   */
+  private async completeLogin(user: any, requestMeta?: { ip?: string; userAgent?: string }) {
     // Ensure organization and role are set for this user
     let updatedUser = user;
     const defaultOrgName = process.env.MGMT_DEFAULT_ORG_NAME ?? 'Indian PG Management';
@@ -211,31 +313,7 @@ export class AuthService {
 
     const permissions = await this.rbacService.getUserPermissions(fullUser?.s_no ?? 0);
 
-    const accessToken = await this.jwtService.signAsync({
-      sub: fullUser?.s_no,
-      phone: fullUser?.phone,
-      email: fullUser?.email,
-      role: fullUser?.role?.name,
-      permissions: Array.from(permissions),
-      organization_id: fullUser?.organization_id,
-    });
-
-    const refreshToken = randomBytes(32).toString('hex');
-    const refreshTokenHash = createHmac('sha256', this.otpSecret)
-      .update(refreshToken)
-      .digest('hex');
-
-    const refreshExpiresAt = new Date(now.getTime() + this.refreshTokenDays * 24 * 60 * 60 * 1000);
-
-    await this.managementPrisma.session.create({
-      data: {
-        user_s_no: user.s_no,
-        refresh_token_hash: refreshTokenHash,
-        expires_at: refreshExpiresAt,
-        ip_address: requestMeta?.ip,
-        user_agent: requestMeta?.userAgent,
-      },
-    });
+    const { accessToken, refreshToken } = await this.issueTokens(fullUser!, permissions, requestMeta);
 
     return ResponseUtil.success(
       {
@@ -253,5 +331,69 @@ export class AuthService {
       },
       'Login successful',
     );
+  }
+
+  // ─── Refresh Token with Rotation ───
+
+  async refreshTokens(dto: RefreshTokenDto, requestMeta?: { ip?: string; userAgent?: string }) {
+    const refreshToken = String(dto.refreshToken ?? '').trim();
+    if (!refreshToken) {
+      throw new BadRequestException('Refresh token is required');
+    }
+
+    const session = await this.findSessionByRefreshToken(refreshToken);
+    if (!session) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    const now = new Date();
+
+    // Check expiry
+    if (session.expires_at < now) {
+      await this.revokeSession(session.s_no);
+      throw new UnauthorizedException('Refresh token expired. Please login again.');
+    }
+
+    // Check user is still active
+    if (!session.user || !session.user.is_active) {
+      await this.revokeSession(session.s_no);
+      throw new UnauthorizedException('User account is inactive');
+    }
+
+    // Re-fetch permissions (they may have changed since login)
+    const permissions = await this.rbacService.getUserPermissions(session.user.s_no);
+
+    // Rotate: revoke old session, issue new tokens with a new session
+    await this.revokeSession(session.s_no);
+    const { accessToken, refreshToken: newRefreshToken } = await this.issueTokens(
+      session.user,
+      permissions,
+      requestMeta,
+    );
+
+    return ResponseUtil.success(
+      {
+        accessToken,
+        refreshToken: newRefreshToken,
+      },
+      'Token refreshed successfully',
+    );
+  }
+
+  // ─── Logout ───
+
+  async logout(dto: RefreshTokenDto) {
+    const refreshToken = String(dto.refreshToken ?? '').trim();
+    if (!refreshToken) {
+      // No token to revoke, just return success
+      return ResponseUtil.success(null, 'Logged out successfully');
+    }
+
+    const session = await this.findSessionByRefreshToken(refreshToken);
+    if (session) {
+      await this.revokeSession(session.s_no);
+    }
+
+    return ResponseUtil.success(null, 'Logged out successfully');
   }
 }

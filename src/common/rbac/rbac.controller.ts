@@ -42,6 +42,14 @@ export class RbacController {
     return ResponseUtil.success(result, 'User permissions fetched successfully');
   }
 
+  @Get('users/:userId/permissions')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
+  @ApiOperation({ summary: 'Get any user effective permissions (for admin management)' })
+  async getUserPermissions(@Param('userId', ParseIntPipe) userId: number) {
+    const result = await this.rbacService.getUserPermissionsWithStatus(userId);
+    return ResponseUtil.success(result, 'User permissions fetched successfully');
+  }
+
   @Get('roles')
   @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.VIEW))
   @ApiOperation({ summary: 'List all roles from management DB (for user assignment)' })

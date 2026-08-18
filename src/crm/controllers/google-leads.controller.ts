@@ -27,6 +27,12 @@ export class GoogleLeadsController {
     if (!q || !q.trim()) {
       throw new BadRequestException('Search query (q) is required');
     }
+    if (q.trim().length < 3) {
+      throw new BadRequestException('Search query must be at least 3 characters');
+    }
+    if (q.trim().length > 200) {
+      throw new BadRequestException('Search query must be at most 200 characters');
+    }
     const pages = Math.min(Math.max(Number(maxPages ?? '1'), 1), 8);
     const refresh = forceRefresh === 'true' || forceRefresh === '1';
     const phone = phoneOnly === 'true' || phoneOnly === '1';
@@ -43,8 +49,14 @@ export class GoogleLeadsController {
     if (!body.area || !body.area.trim()) {
       throw new BadRequestException('area is required');
     }
+    if (body.area.trim().length > 150) {
+      throw new BadRequestException('area name must be at most 150 characters');
+    }
     if (!body.keywords || !Array.isArray(body.keywords) || body.keywords.length === 0) {
       throw new BadRequestException('keywords array is required');
+    }
+    if (body.keywords.length > 20) {
+      throw new BadRequestException('Too many keywords: maximum 20 per sweep to control API costs');
     }
     const pages = Math.min(Math.max(Number(body.maxPages ?? '8'), 1), 8);
     const phone = body.phoneOnly === true || body.phoneOnly === 'true' || body.phoneOnly === '1';
@@ -88,6 +100,59 @@ export class GoogleLeadsController {
   }
 
   /**
+   * Get all swept queries — returns all cached search queries.
+   * Used by the frontend to show sweep status badges on area chips.
+   * The frontend matches area names against these query strings.
+   */
+  @Get('swept-areas')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
+  async sweptAreas() {
+    // Return all cached queries — the query format is "keyword area" (e.g. "pg anna nagar")
+    // The frontend knows which areas belong to which city and will match them locally
+    const cached = await this.prisma.crm_google_search_cache.findMany({
+      select: {
+        query: true,
+        total: true,
+        new_count: true,
+        api_calls: true,
+        created_at: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    // Deduplicate by query string, keeping the most recent
+    const seen = new Set<string>();
+    const result: Array<{
+      area: string;
+      total_found: number;
+      sweep_count: number;
+      last_swept: string;
+      api_calls: number;
+    }> = [];
+
+    for (const row of cached) {
+      if (seen.has(row.query)) {
+        // Update the existing entry's sweep count
+        const existing = result.find((r) => r.area === row.query);
+        if (existing) {
+          existing.sweep_count++;
+        }
+        continue;
+      }
+      seen.add(row.query);
+      result.push({
+        area: row.query,
+        total_found: row.total,
+        sweep_count: 1,
+        last_swept: row.created_at.toISOString(),
+        api_calls: row.api_calls,
+      });
+    }
+
+    return ResponseUtil.success(result, 'Swept areas fetched successfully');
+  }
+
+  /**
    * Import selected Google Places results into crm_contacts.
    */
   @Post('import')
@@ -95,6 +160,9 @@ export class GoogleLeadsController {
   async import(@Body() body: any) {
     if (!body.leads || !Array.isArray(body.leads) || body.leads.length === 0) {
       throw new BadRequestException('leads array is required');
+    }
+    if (body.leads.length > 500) {
+      throw new BadRequestException('Too many leads: maximum 500 per import. Split into smaller batches.');
     }
     const result = await this.googleLeads.importGoogleLeads(body.leads, body.importedBy);
     const parts: string[] = [];

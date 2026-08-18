@@ -3,6 +3,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 
 @ApiTags('auth')
@@ -48,5 +49,27 @@ export class AuthController {
   ) {
     const ip = xForwardedFor?.split(',')?.[0]?.trim();
     return this.authService.verifyOtp(dto, { ip, userAgent });
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh access token using refresh token (with rotation)' })
+  @ApiResponse({ status: 200, description: 'Token refreshed successfully' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  async refresh(
+    @Body() dto: RefreshTokenDto,
+    @Headers('x-forwarded-for') xForwardedFor?: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    const ip = xForwardedFor?.split(',')?.[0]?.trim();
+    return this.authService.refreshTokens(dto, { ip, userAgent });
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Logout user by revoking refresh token session' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully' })
+  async logout(@Body() dto: RefreshTokenDto) {
+    return this.authService.logout(dto);
   }
 }

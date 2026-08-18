@@ -10,36 +10,42 @@ datasource db {
 }
 
 model crm_contacts {
-  s_no               Int                 @id @default(autoincrement())
-  pg_name            String              @db.VarChar(200)
-  owner_name         String?             @db.VarChar(150)
-  designation        String?             @db.VarChar(100)
-  phone              String?             @db.VarChar(20)
-  alternate_phone    String?             @db.VarChar(20)
-  whatsapp_number    String?             @db.VarChar(20)
-  email              String?             @db.VarChar(150)
-  country_id         Int?
-  state_id           Int?
-  city_id            Int?
-  area               String?             @db.VarChar(150)
-  address            String?             @db.VarChar(500)
-  no_of_rooms        Int?
-  google_maps_url    String?             @db.VarChar(500)
-  google_rating      Decimal?            @db.Decimal(2, 1)
-  website            String?             @db.VarChar(255)
-  tags               String?             @db.Text
-  source             crm_contacts_source @default(MANUAL)
-  status             crm_contacts_status @default(NEW)
-  import_batch_id    Int?
-  notes              String?             @db.Text
-  created_at         DateTime            @default(now()) @db.DateTime(0)
-  updated_at         DateTime            @default(now()) @db.DateTime(0)
-  is_deleted         Boolean             @default(false)
-  deleted_at         DateTime?           @db.DateTime(0)
-  google_place_id    String?             @db.VarChar(255)
-  crm_import_batches crm_import_batches? @relation(fields: [import_batch_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_contact_batch")
-  crm_leads          crm_leads?
-  crm_site_visits    crm_site_visits[]
+  s_no                Int                 @id @default(autoincrement())
+  pg_name             String              @db.VarChar(200)
+  owner_name          String?             @db.VarChar(150)
+  designation         String?             @db.VarChar(100)
+  phone               String?             @db.VarChar(20)
+  alternate_phone     String?             @db.VarChar(20)
+  whatsapp_number     String?             @db.VarChar(20)
+  email               String?             @db.VarChar(150)
+  country_id          Int?
+  state_id            Int?
+  city_id             Int?
+  area                String?             @db.VarChar(150)
+  address             String?             @db.VarChar(500)
+  no_of_rooms         Int?
+  google_maps_url     String?             @db.VarChar(500)
+  google_rating       Decimal?            @db.Decimal(2, 1)
+  website             String?             @db.VarChar(255)
+  tags                String?             @db.Text
+  source              crm_contacts_source @default(MANUAL)
+  status              crm_contacts_status @default(NEW)
+  import_batch_id     Int?
+  notes               String?             @db.Text
+  created_at          DateTime            @default(now()) @db.DateTime(0)
+  updated_at          DateTime            @default(now()) @db.DateTime(0)
+  is_deleted          Boolean             @default(false)
+  deleted_at          DateTime?           @db.DateTime(0)
+  google_place_id     String?             @db.VarChar(255)
+  google_rating_count Int?
+  place_types         String?             @db.VarChar(500)
+  primary_type        String?             @db.VarChar(100)
+  business_status     String?             @db.VarChar(50)
+  latitude            Decimal?            @db.Decimal(10, 7)
+  longitude           Decimal?            @db.Decimal(10, 7)
+  crm_import_batches  crm_import_batches? @relation(fields: [import_batch_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_contact_batch")
+  crm_leads           crm_leads?
+  crm_site_visits     crm_site_visits[]
 
   @@index([import_batch_id], map: "idx_crm_contact_batch")
   @@index([city_id], map: "idx_crm_contact_city_id")

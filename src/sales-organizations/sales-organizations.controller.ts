@@ -73,6 +73,15 @@ export class SalesOrganizationsController {
     return this.service.findOne(id);
   }
 
+  @Get(':id/roles-status')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @ApiOperation({ summary: 'Get role assignment status for an org (has PARTNER_ADMIN, available roles)' })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiResponse({ status: 200, description: 'Role status fetched successfully' })
+  getRolesStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.service.getRolesStatus(id);
+  }
+
   @Get(':id/employees')
   @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'List employees (users) of a sales organization' })
