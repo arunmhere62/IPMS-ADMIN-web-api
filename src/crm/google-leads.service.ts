@@ -118,6 +118,85 @@ const MAX_AREA_LENGTH = 150;
 // At 8 calls/search, that's ~125 searches/day — plenty for normal usage
 const DAILY_API_BUDGET = Number(process.env.GOOGLE_PLACES_DAILY_LIMIT || '1000');
 
+// ─── PG Relevance Filtering ──────────────────────────────────────────────────
+
+// Place types that indicate lodging/PG relevance (no guest house — not our business)
+const PG_RELEVANT_TYPES = new Set([
+  'lodging', 'hostel',
+]);
+
+// Place types that are definitely NOT PG/hostel — exclude these
+const EXCLUDE_PLACE_TYPES = new Set([
+  'hospital', 'health', 'doctor', 'dentist', 'pharmacy', 'veterinary_care',
+  'school', 'primary_school', 'secondary_school', 'university', 'college',
+  'shopping_mall', 'department_store', 'clothing_store', 'shoe_store',
+  'electronics_store', 'furniture_store', 'hardware_store', 'pet_store',
+  'car_dealer', 'car_rental', 'car_repair', 'gas_station', 'parking',
+  'bank', 'atm', 'finance', 'accounting', 'insurance_agency',
+  'courthouse', 'city_hall', 'embassy', 'local_government_office',
+  'police', 'fire_station', 'post_office',
+  'electrician', 'plumber', 'roofing_contractor', 'general_contractor',
+  'beauty_salon', 'hair_care', 'spa', 'gym', 'fitness_center',
+  'movie_theater', 'amusement_park', 'bowling_alley', 'casino',
+  'place_of_worship', 'church', 'mosque', 'hindu_temple', 'synagogue',
+  'cemetery', 'funeral_home',
+  'lawyer', 'real_estate_agency', 'travel_agency', 'tourist_attraction',
+  'museum', 'art_gallery', 'library',
+  'florist', 'bakery', 'liquor_store', 'convenience_store', 'supermarket',
+  'grocery_store', 'food', 'restaurant', 'cafe', 'bar', 'night_club',
+  'meal_takeaway', 'meal_delivery',
+  'laundry', 'dry_cleaning',
+  'storage', 'moving_company', 'courier_service',
+  'industrial_area', 'factory', 'warehouse', 'wholesaler',
+]);
+
+// Names that explicitly disqualify a place regardless of type (not our target business)
+const EXCLUDE_NAME_PATTERNS = [
+  'guest house', 'guesthouse', 'bed and breakfast', 'bed & breakfast',
+];
+
+// Check if a place is likely a PG/hostel business using DB keywords
+function isPgRelevant(place: GooglePlace, dbKeywords: string[]): boolean {
+  const name = (place.displayName?.text ?? '').toLowerCase();
+  const types = place.types ?? [];
+
+  // Hard exclude: name explicitly indicates a non-PG business (e.g. guest house)
+  const hasExcludedName = EXCLUDE_NAME_PATTERNS.some((p) => name.includes(p));
+  if (hasExcludedName) return false;
+
+  // Strong signal: name contains one of the DB keywords
+  const nameMatches = dbKeywords.some((kw) => {
+    const lowerKw = kw.toLowerCase().trim();
+    if (!lowerKw) return false;
+    // Use word boundary for short keywords like 'pg' to avoid false positives
+    if (lowerKw.length <= 3) {
+      return new RegExp(`\\b${lowerKw}\\b`, 'i').test(name);
+    }
+    return name.includes(lowerKw);
+  });
+  if (nameMatches) return true;
+
+  // Medium signal: has lodging-related place type
+  const hasRelevantType = types.some((t) => PG_RELEVANT_TYPES.has(t.toLowerCase()));
+  if (hasRelevantType) return true;
+
+  // Exclude: has clearly non-PG place types and no PG name match
+  const hasExcludedType = types.some((t) => EXCLUDE_PLACE_TYPES.has(t.toLowerCase()));
+  if (hasExcludedType) return false;
+
+  // Gray area: no strong signal either way — keep it (user can decide)
+  return true;
+}
+
+// Build a smart search query — adds 'in' between keyword and area for better Google matching
+function buildSearchQuery(keyword: string, area: string): string {
+  const kw = keyword.trim();
+  const ar = area.trim();
+  // If keyword already contains 'in' or area is very short, keep simple format
+  if (kw.toLowerCase().includes(' in ')) return `${kw} ${ar}`;
+  return `${kw} in ${ar}`;
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -251,64 +330,121 @@ export class GoogleLeadsService {
     // ─── Fresh API search ───
     const apiKey = this.getApiKey();
     const allPlaces: GooglePlace[] = [];
-    let nextPageToken: string | null = null;
     let apiCallsMade = 0;
 
-    // Page 1: initial search
-    for (let page = 0; page < pagesToFetch; page++) {
-      const requestBody: any = {
-        textQuery: page === 0 ? textQuery : `${textQuery}`,
-        pageSize: PAGE_SIZE,
+    // Helper: fetch a single page from Google Places API
+    const fetchPage = async (requestBody: any): Promise<{ places: GooglePlace[]; nextPageToken: string | null }> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(PLACES_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': FIELD_MASK,
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      apiCallsMade++;
+      const data = await res.json() as TextSearchResponse;
+
+      if (!res.ok) {
+        const msg = (data as any)?.error?.message ?? 'Unknown Google API error';
+        this.logger.error(`Google API error (${res.status}): ${msg}`);
+        throw new InternalServerErrorException(`Google API error (${res.status}): ${msg}`);
+      }
+
+      return {
+        places: data.places ?? [],
+        nextPageToken: data.nextPageToken ?? null,
       };
-      if (nextPageToken) {
-        requestBody.pageToken = nextPageToken;
+    };
+
+    // Phase 1: Try with includedType: 'lodging' to pre-filter at Google's side (cost saver)
+    // This makes Google return only lodging-type places, reducing irrelevant results
+    let usedTypeFilter = true;
+    let nextPageToken: string | null = null;
+
+    this.logger.log(`Google Places API search (with lodging filter) for: "${textQuery}"`);
+    const firstPage = await fetchPage({
+      textQuery,
+      pageSize: PAGE_SIZE,
+      languageCode: 'en',
+      regionCode: 'IN',
+      includedType: 'lodging',
+    });
+
+    allPlaces.push(...firstPage.places);
+    nextPageToken = firstPage.nextPageToken;
+
+    // If lodging filter returned very few results, fall back to unfiltered search
+    // Many Indian PGs aren't categorized as 'lodging' by Google — don't miss them
+    if (firstPage.places.length < 5 && !nextPageToken) {
+      this.logger.log(`Lodging filter returned only ${firstPage.places.length} results. Retrying without type filter for: "${textQuery}"`);
+      allPlaces.length = 0; // Clear previous results
+      apiCallsMade = 0; // Reset counter since we're starting fresh
+      usedTypeFilter = false;
+
+      this.logger.log(`Google Places API search (unfiltered) for: "${textQuery}"`);
+      const fallbackPage = await fetchPage({
+        textQuery,
+        pageSize: PAGE_SIZE,
+        languageCode: 'en',
+        regionCode: 'IN',
+      });
+
+      allPlaces.push(...fallbackPage.places);
+      nextPageToken = fallbackPage.nextPageToken;
+    }
+
+    // Fetch remaining pages
+    const remainingPages = pagesToFetch - 1;
+    for (let page = 0; page < remainingPages; page++) {
+      if (!nextPageToken) break;
+
+      // Google requires a short delay before using nextPageToken
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const requestBody: any = {
+        textQuery,
+        pageSize: PAGE_SIZE,
+        languageCode: 'en',
+        regionCode: 'IN',
+        pageToken: nextPageToken,
+      };
+      // Keep the type filter consistent with what we used for page 1
+      if (usedTypeFilter) {
+        requestBody.includedType = 'lodging';
       }
 
       try {
-        this.logger.log(`Google Places API call ${page + 1}/${pagesToFetch} for query: "${textQuery}"`);
+        this.logger.log(`Google Places API call ${page + 2}/${pagesToFetch} for query: "${textQuery}"`);
+        const pageResult = await fetchPage(requestBody);
+        allPlaces.push(...pageResult.places);
+        nextPageToken = pageResult.nextPageToken;
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        const res = await fetch(PLACES_API_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': FIELD_MASK,
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
-        apiCallsMade++;
-        const data = await res.json() as TextSearchResponse;
-
-        if (!res.ok) {
-          const msg = (data as any)?.error?.message ?? 'Unknown Google API error';
-          this.logger.error(`Google API error (${res.status}): ${msg}`);
-          throw new InternalServerErrorException(`Google API error (${res.status}): ${msg}`);
-        }
-
-        const places = data.places ?? [];
-        allPlaces.push(...places);
-        nextPageToken = data.nextPageToken ?? null;
-
-        if (!nextPageToken || places.length === 0) break;
-
-        // Google requires a short delay before using nextPageToken
-        if (nextPageToken && page < pagesToFetch - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
+        if (!nextPageToken || pageResult.places.length === 0) break;
       } catch (error: any) {
         if (error instanceof InternalServerErrorException) throw error;
         throw new InternalServerErrorException(`Failed to call Google Places API: ${error.message}`);
       }
     }
 
+    // ─── PG Relevance Filter: remove non-PG results (hospitals, schools, etc.) ───
+    // Fetch keywords from DB for name matching — only these keywords determine what's relevant
+    const dbKeywords = await this.listSearchKeywords();
+    const beforeFilter = allPlaces.length;
+    const pgRelevantPlaces = allPlaces.filter((p) => isPgRelevant(p, dbKeywords));
+    if (beforeFilter !== pgRelevantPlaces.length) {
+      this.logger.log(`PG relevance filter: ${beforeFilter} → ${pgRelevantPlaces.length} (removed ${beforeFilter - pgRelevantPlaces.length} non-PG results)`);
+    }
+
     // ─── Dedup Step 1: Remove exact same place ID within this batch ───
     const seenPlaceIds = new Set<string>();
-    const uniquePlaces = allPlaces.filter((p) => {
+    const uniquePlaces = pgRelevantPlaces.filter((p) => {
       if (!p.id || seenPlaceIds.has(p.id)) return false;
       seenPlaceIds.add(p.id);
       return true;
@@ -473,7 +609,7 @@ export class GoogleLeadsService {
     }
 
     const pages = Math.min(Math.max(maxPages, 1), MAX_PAGES);
-    const queries = uniqueKeywords.map((kw) => `${kw} ${trimmedArea}`);
+    const queries = uniqueKeywords.map((kw) => buildSearchQuery(kw, trimmedArea));
 
     // Pre-check daily budget for the entire sweep (worst case: all fresh searches)
     // Cache hits won't count, but we check upfront to prevent partial sweeps
