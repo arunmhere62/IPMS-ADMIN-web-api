@@ -29,19 +29,7 @@ export class SmsService {
   }
 
   private normalizeForProvider(phoneNumber: string) {
-    const digits = this.sanitizePhone(phoneNumber);
-    if (!digits) return '';
-
-    // Common India formats:
-    // +91XXXXXXXXXX -> 91XXXXXXXXXX
-    // 91XXXXXXXXXX  -> 91XXXXXXXXXX
-    // XXXXXXXXXX    -> XXXXXXXXXX
-    // Some gateways expect 10-digit mobile number.
-    if (digits.length === 12 && digits.startsWith('91')) {
-      return digits.slice(2);
-    }
-
-    return digits;
+    return this.sanitizePhone(phoneNumber);
   }
 
   async sendOtp(phoneNumber: string, otp: string): Promise<boolean> {
@@ -85,7 +73,19 @@ export class SmsService {
 
       this.logger.log(`SMS API Response: ${result}`);
 
-      if (response.ok) {
+      const resultLower = String(result || '').toLowerCase();
+      const hasExplicitSuccessErrorCode = /error\s*[:=]\s*0\b/.test(resultLower);
+      const hasExplicitFailureErrorCode = /error\s*[:=]\s*[1-9][0-9]*\b/.test(resultLower);
+
+      const looksLikeError =
+        hasExplicitFailureErrorCode ||
+        (!hasExplicitSuccessErrorCode &&
+          (resultLower.includes('invalid') ||
+            resultLower.includes('failed') ||
+            resultLower.includes('unauthor') ||
+            resultLower.includes('incorrect')));
+
+      if (response.ok && !looksLikeError) {
         this.logger.log(`OTP sent successfully to ${phoneNumber}`);
         return true;
       }
