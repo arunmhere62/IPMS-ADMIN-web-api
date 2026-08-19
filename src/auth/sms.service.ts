@@ -12,12 +12,12 @@ export class SmsService {
   private readonly smsRoute: string;
 
   constructor() {
-    this.smsApiUrl = process.env.SMS_API_URL ?? 'http://cannyinfotech.in/api/mt/SendSMS';
-    this.smsUser = process.env.SMS_API_USER ?? 'SATZTECHNOSOLUTIONS';
-    this.smsPassword = process.env.SMS_API_PASSWORD ?? 'demo1234';
-    this.smsSenderId = process.env.SMS_SENDER_ID ?? 'SATZTH';
-    this.smsChannel = process.env.SMS_CHANNEL ?? 'Trans';
-    this.smsRoute = process.env.SMS_ROUTE ?? '10';
+    this.smsApiUrl = process.env.SMS_API_URL || 'http://cannyinfotech.in/api/mt/SendSMS';
+    this.smsUser = process.env.SMS_API_USER || 'SATZTECHNOSOLUTIONS';
+    this.smsPassword = process.env.SMS_API_PASSWORD || 'demo1234';
+    this.smsSenderId = process.env.SMS_SENDER_ID || 'SATZTH';
+    this.smsChannel = process.env.SMS_CHANNEL || 'Trans';
+    this.smsRoute = process.env.SMS_ROUTE || '10';
   }
 
   private isBypassEnabled() {

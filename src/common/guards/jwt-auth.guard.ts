@@ -58,7 +58,7 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = await this.jwtService.verifyAsync<AdminWebJwtPayload>(token, {
-        secret: process.env.WEB_AUTH_JWT_SECRET ?? process.env.JWT_SECRET ?? 'web-auth-jwt-secret',
+        secret: process.env.WEB_AUTH_JWT_SECRET || process.env.JWT_SECRET || 'web-auth-jwt-secret',
       });
 
       request.user = payload;
