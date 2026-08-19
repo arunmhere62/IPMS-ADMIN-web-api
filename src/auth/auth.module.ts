@@ -8,9 +8,9 @@ import { RbacService } from '../common/rbac/rbac.service';
 @Module({
   imports: [
     JwtModule.register({
-      secret: process.env.WEB_AUTH_JWT_SECRET ?? process.env.JWT_SECRET ?? 'web-auth-jwt-secret',
+      secret: process.env.WEB_AUTH_JWT_SECRET || process.env.JWT_SECRET || 'web-auth-jwt-secret',
       signOptions: {
-        expiresIn: (process.env.WEB_AUTH_JWT_EXPIRES_IN ?? '15m') as any,
+        expiresIn: (process.env.WEB_AUTH_JWT_EXPIRES_IN || '15m') as any,
       },
     }),
   ],

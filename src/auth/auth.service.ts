@@ -12,13 +12,13 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger('AuthService');
-  private readonly otpExpiryMinutes = Number(process.env.WEB_AUTH_OTP_EXPIRY_MINUTES ?? 5);
-  private readonly otpLength = Number(process.env.WEB_AUTH_OTP_LENGTH ?? 4);
-  private readonly otpMaxAttempts = Number(process.env.WEB_AUTH_OTP_MAX_ATTEMPTS ?? 5);
-  private readonly otpSecret = process.env.WEB_AUTH_OTP_SECRET ?? 'web-auth-otp-secret';
+  private readonly otpExpiryMinutes = Number(process.env.WEB_AUTH_OTP_EXPIRY_MINUTES || 5);
+  private readonly otpLength = Number(process.env.WEB_AUTH_OTP_LENGTH || 4);
+  private readonly otpMaxAttempts = Number(process.env.WEB_AUTH_OTP_MAX_ATTEMPTS || 5);
+  private readonly otpSecret = process.env.WEB_AUTH_OTP_SECRET || 'web-auth-otp-secret';
 
-  private readonly refreshTokenDays = Number(process.env.WEB_AUTH_REFRESH_DAYS ?? 30);
-  private readonly refreshSecret = process.env.WEB_AUTH_REFRESH_SECRET ?? process.env.JWT_REFRESH_SECRET ?? this.otpSecret;
+  private readonly refreshTokenDays = Number(process.env.WEB_AUTH_REFRESH_DAYS || 30);
+  private readonly refreshSecret = process.env.WEB_AUTH_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET || this.otpSecret;
 
   constructor(
     private readonly managementPrisma: ManagementPrismaService,
