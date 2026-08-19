@@ -247,10 +247,8 @@ def ensureNetworkExists(String networkName) {
 }
 
 def prepareEnvFile() {
-    if (fileExists('.env')) {
-        echo 'Using existing .env file in workspace.'
-        return
-    }
+    // Always remove stale .env from previous builds
+    sh 'rm -f .env'
 
     def envCredentialId = 'ipgm-admin-api-prod-env-file'
 
@@ -261,7 +259,7 @@ def prepareEnvFile() {
         }
         echo 'Wrote .env file from Jenkins secret file credential.'
     } catch (Exception e) {
-        echo "WARNING: Could not load Jenkins credential '${envCredentialId}' and no .env file present. Continuing anyway."
+        echo "WARNING: Could not load Jenkins credential '${envCredentialId}'. Continuing without .env file."
     }
 }
 

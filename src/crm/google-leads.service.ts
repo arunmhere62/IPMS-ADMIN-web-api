@@ -116,7 +116,7 @@ const MAX_LEADS_PER_IMPORT = 500;
 const MAX_AREA_LENGTH = 150;
 // Daily API call budget — configurable via env. Default: 1000 calls/day
 // At 8 calls/search, that's ~125 searches/day — plenty for normal usage
-const DAILY_API_BUDGET = Number(process.env.GOOGLE_PLACES_DAILY_LIMIT ?? '1000');
+const DAILY_API_BUDGET = Number(process.env.GOOGLE_PLACES_DAILY_LIMIT || '1000');
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
