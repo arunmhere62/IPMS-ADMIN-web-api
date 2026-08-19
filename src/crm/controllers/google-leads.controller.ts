@@ -71,6 +71,16 @@ export class GoogleLeadsController {
   }
 
   /**
+   * Get today's Google API usage stats — used to display budget/usage in the UI.
+   */
+  @Get('usage')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_GOOGLE_LEADS.VIEW))
+  async usage() {
+    const data = await this.googleLeads.getDailyApiUsage();
+    return ResponseUtil.success(data);
+  }
+
+  /**
    * Get search history — shows all previously searched queries.
    */
   @Get('history')

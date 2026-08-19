@@ -209,21 +209,52 @@ export class GoogleLeadsService {
   ) {}
 
   /**
+   * Get today's Google API usage stats (calls made, budget, remaining).
+   * Public method — used by the UI to display usage/budget status.
+   */
+  async getDailyApiUsage(): Promise<{
+    used_today: number;
+    daily_budget: number;
+    remaining: number;
+    percent_used: number;
+    unlimited: boolean;
+    searches_today: number;
+  }> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const [aggStats, searchCount] = await Promise.all([
+      this.prisma.crm_google_search_cache.aggregate({
+        where: { created_at: { gte: startOfDay } },
+        _sum: { api_calls: true },
+      }),
+      this.prisma.crm_google_search_cache.count({
+        where: { created_at: { gte: startOfDay } },
+      }),
+    ]);
+
+    const usedToday = aggStats._sum.api_calls ?? 0;
+    const unlimited = DAILY_API_BUDGET <= 0;
+
+    return {
+      used_today: usedToday,
+      daily_budget: DAILY_API_BUDGET,
+      remaining: unlimited ? -1 : Math.max(0, DAILY_API_BUDGET - usedToday),
+      percent_used: unlimited ? 0 : Math.min(100, Math.round((usedToday / DAILY_API_BUDGET) * 100)),
+      unlimited,
+      searches_today: searchCount,
+    };
+  }
+
+  /**
    * Check if the daily Google API call budget has been exceeded.
    * Counts all API calls made today from the search cache table.
    */
   private async checkDailyApiBudget(callsRequested: number): Promise<void> {
     if (DAILY_API_BUDGET <= 0) return; // 0 = unlimited
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const todayStats = await this.prisma.crm_google_search_cache.aggregate({
-      where: { created_at: { gte: startOfDay } },
-      _sum: { api_calls: true },
-    });
-
-    const usedToday = todayStats._sum.api_calls ?? 0;
+    const usage = await this.getDailyApiUsage();
+    const usedToday = usage.used_today;
     if (usedToday + callsRequested > DAILY_API_BUDGET) {
       throw new BadRequestException(
         `Daily Google API call budget exceeded. Used ${usedToday}/${DAILY_API_BUDGET} calls today. ` +
