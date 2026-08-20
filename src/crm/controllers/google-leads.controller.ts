@@ -66,6 +66,7 @@ export class GoogleLeadsController {
       pages,
       phone,
       body.searchedBy,
+      body.city,
     );
     return ResponseUtil.success(result);
   }

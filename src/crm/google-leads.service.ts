@@ -184,17 +184,19 @@ function isPgRelevant(place: GooglePlace, dbKeywords: string[]): boolean {
   const hasExcludedType = types.some((t) => EXCLUDE_PLACE_TYPES.has(t.toLowerCase()));
   if (hasExcludedType) return false;
 
-  // Gray area: no strong signal either way — keep it (user can decide)
-  return true;
+  // No PG signal at all — exclude. Don't want irrelevant places polluting results.
+  return false;
 }
 
 // Build a smart search query — adds 'in' between keyword and area for better Google matching
-function buildSearchQuery(keyword: string, area: string): string {
+function buildSearchQuery(keyword: string, area: string, city?: string): string {
   const kw = keyword.trim();
   const ar = area.trim();
+  const ct = city?.trim() ?? '';
+  const location = ct ? `${ar}, ${ct}` : ar;
   // If keyword already contains 'in' or area is very short, keep simple format
-  if (kw.toLowerCase().includes(' in ')) return `${kw} ${ar}`;
-  return `${kw} in ${ar}`;
+  if (kw.toLowerCase().includes(' in ')) return `${kw} ${location}`;
+  return `${kw} in ${location}`;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -248,7 +250,7 @@ export class GoogleLeadsService {
 
   /**
    * Check if the daily Google API call budget has been exceeded.
-   * Counts all API calls made today from the search cache table.
+   * Logs a warning only — does NOT block searches. Budget is advisory.
    */
   private async checkDailyApiBudget(callsRequested: number): Promise<void> {
     if (DAILY_API_BUDGET <= 0) return; // 0 = unlimited
@@ -256,9 +258,9 @@ export class GoogleLeadsService {
     const usage = await this.getDailyApiUsage();
     const usedToday = usage.used_today;
     if (usedToday + callsRequested > DAILY_API_BUDGET) {
-      throw new BadRequestException(
+      this.logger.warn(
         `Daily Google API call budget exceeded. Used ${usedToday}/${DAILY_API_BUDGET} calls today. ` +
-        `This request needs ${callsRequested} more. Try again tomorrow or ask admin to increase GOOGLE_PLACES_DAILY_LIMIT.`,
+        `This request needs ${callsRequested} more. Proceeding anyway — budget is advisory only.`,
       );
     }
   }
@@ -294,6 +296,7 @@ export class GoogleLeadsService {
     forceRefresh: boolean = false,
     searchedBy?: number,
     phoneOnly: boolean = false,
+    areaFilter?: string,
   ): Promise<SearchGoogleLeadsResult> {
     // ─── Validate query ───
     const query = textQuery.trim();
@@ -431,8 +434,32 @@ export class GoogleLeadsService {
       nextPageToken = fallbackPage.nextPageToken;
     }
 
-    // Fetch remaining pages
-    const remainingPages = pagesToFetch - 1;
+    // ─── Early termination check: only skip remaining pages if ALL page 1 results are already in DB ───
+    // Using 100% threshold (not 70%) so we never miss new contacts on later pages.
+    // If even 1 result is new, we fetch all requested pages.
+    let shouldSkipRemainingPages = false;
+    if (nextPageToken && pagesToFetch > 1) {
+      const page1PlaceIds = allPlaces.map((p) => p.id).filter(Boolean);
+      const page1Phones = allPlaces
+        .map((p) => toE164(p.nationalPhoneNumber || p.internationalPhoneNumber))
+        .filter((p): p is string => !!p);
+      const page1OrConds: any[] = [];
+      if (page1PlaceIds.length) page1OrConds.push({ google_place_id: { in: page1PlaceIds } });
+      if (page1Phones.length) page1OrConds.push({ phone: { in: page1Phones } });
+      if (page1OrConds.length) {
+        const existingCount = await this.prisma.crm_contacts.count({
+          where: { OR: page1OrConds, is_deleted: false },
+        });
+        // Only skip if every single result from page 1 is already in DB
+        if (existingCount >= page1PlaceIds.length && page1PlaceIds.length > 0) {
+          this.logger.log(`Early termination for "${textQuery}": 100% of page 1 (${page1PlaceIds.length} places) already in DB. Skipping ${pagesToFetch - 1} remaining pages.`);
+          shouldSkipRemainingPages = true;
+        }
+      }
+    }
+
+    // Fetch remaining pages (unless early termination triggered)
+    const remainingPages = shouldSkipRemainingPages ? 0 : pagesToFetch - 1;
     for (let page = 0; page < remainingPages; page++) {
       if (!nextPageToken) break;
 
@@ -465,12 +492,31 @@ export class GoogleLeadsService {
     }
 
     // ─── PG Relevance Filter: remove non-PG results (hospitals, schools, etc.) ───
-    // Fetch keywords from DB for name matching — only these keywords determine what's relevant
     const dbKeywords = await this.listSearchKeywords();
     const beforeFilter = allPlaces.length;
-    const pgRelevantPlaces = allPlaces.filter((p) => isPgRelevant(p, dbKeywords));
+    let pgRelevantPlaces = allPlaces.filter((p) => isPgRelevant(p, dbKeywords));
     if (beforeFilter !== pgRelevantPlaces.length) {
-      this.logger.log(`PG relevance filter: ${beforeFilter} → ${pgRelevantPlaces.length} (removed ${beforeFilter - pgRelevantPlaces.length} non-PG results)`);
+      this.logger.log(`PG relevance filter: ${beforeFilter} -> ${pgRelevantPlaces.length} (removed ${beforeFilter - pgRelevantPlaces.length} non-PG results)`);
+    }
+
+    // ─── Area Filter: remove results not in the searched area/city ───
+    // Google text search returns results from anywhere; verify address matches.
+    if (areaFilter) {
+      const areaTokens = areaFilter
+        .toLowerCase()
+        .split(/[\s,]+/)
+        .filter((t) => t.length >= 3 && !['the', 'and', 'near', 'area', 'city'].includes(t));
+      const beforeAreaFilter = pgRelevantPlaces.length;
+      pgRelevantPlaces = pgRelevantPlaces.filter((place) => {
+        const addr = (place.formattedAddress ?? '').toLowerCase();
+        const components = place.addressComponents ?? [];
+        const componentTexts = components.map((c) => c.longText.toLowerCase()).join(' ');
+        const fullAddr = `${addr} ${componentTexts}`;
+        return areaTokens.some((token) => fullAddr.includes(token));
+      });
+      if (beforeAreaFilter !== pgRelevantPlaces.length) {
+        this.logger.log(`Area filter "${areaFilter}": ${beforeAreaFilter} -> ${pgRelevantPlaces.length} (removed ${beforeAreaFilter - pgRelevantPlaces.length} out-of-area results)`);
+      }
     }
 
     // ─── Dedup Step 1: Remove exact same place ID within this batch ───
@@ -620,6 +666,7 @@ export class GoogleLeadsService {
     maxPages: number = 1,
     phoneOnly: boolean = false,
     searchedBy?: number,
+    city?: string,
   ): Promise<SearchGoogleLeadsResult> {
     const trimmedArea = area?.trim() ?? '';
     if (!trimmedArea) {
@@ -639,25 +686,33 @@ export class GoogleLeadsService {
       );
     }
 
+    const trimmedCity = city?.trim() ?? '';
+    // Area filter includes city so address matching checks both area and city tokens
+    const areaFilter = trimmedCity ? `${trimmedArea}, ${trimmedCity}` : trimmedArea;
+
     const pages = Math.min(Math.max(maxPages, 1), MAX_PAGES);
-    const queries = uniqueKeywords.map((kw) => buildSearchQuery(kw, trimmedArea));
+    const queries = uniqueKeywords.map((kw) => buildSearchQuery(kw, trimmedArea, trimmedCity));
 
     // Pre-check daily budget for the entire sweep (worst case: all fresh searches)
     // Cache hits won't count, but we check upfront to prevent partial sweeps
     const maxPossibleCalls = uniqueKeywords.length * pages;
     await this.checkDailyApiBudget(maxPossibleCalls);
 
-    const perQuery = await Promise.all(
-      queries.map((q) => this.searchGoogleLeads(q, pages, false, searchedBy, phoneOnly)),
-    );
-
+    // Run queries sequentially with cross-query dedup.
+    // If an earlier query already found a place, later queries can skip pages that return the same places.
     const seenPlaceIds = new Set<string>();
     const seenPhones = new Set<string>();
     const merged: GoogleLeadResult[] = [];
     let totalApiCalls = 0;
 
-    for (const result of perQuery) {
+    for (let qi = 0; qi < queries.length; qi++) {
+      const query = queries[qi];
+      this.logger.log(`Sweep query ${qi + 1}/${queries.length}: "${query}"`);
+
+      const result = await this.searchGoogleLeads(query, pages, false, searchedBy, phoneOnly, areaFilter);
       totalApiCalls += result.api_calls_made;
+
+      let newFromThisQuery = 0;
       for (const lead of result.results) {
         const hasPlaceId = lead.google_place_id && seenPlaceIds.has(lead.google_place_id);
         const hasPhone = lead.phone && seenPhones.has(lead.phone);
@@ -666,7 +721,13 @@ export class GoogleLeadsService {
         if (lead.google_place_id) seenPlaceIds.add(lead.google_place_id);
         if (lead.phone) seenPhones.add(lead.phone);
         merged.push(lead);
+        newFromThisQuery++;
       }
+
+      this.logger.log(`Sweep query "${query}": ${result.results.length} results, ${newFromThisQuery} new, ${result.api_calls_made} API calls`);
+
+      // Don't skip remaining keywords — different keywords (PG vs Hostel) can return different places.
+      // Just log the stats for visibility.
     }
 
     const total = merged.length;
