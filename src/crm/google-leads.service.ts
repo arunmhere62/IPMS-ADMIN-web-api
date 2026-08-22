@@ -658,7 +658,10 @@ export class GoogleLeadsService {
 
   /**
    * Sweep an area with multiple keywords and merge/dedup the results.
-   * Runs each keyword+area query in parallel and returns a combined result set.
+   * Two-phase parallel approach:
+   *   Phase 1: Fetch page 1 for ALL keywords in parallel (batches of 5)
+   *   Phase 2: Skip remaining pages for keywords whose page 1 was >80% duplicates
+   *   Phase 3: Fetch remaining pages for qualifying keywords in parallel
    */
   async sweepGoogleLeads(
     area: string,
@@ -687,29 +690,39 @@ export class GoogleLeadsService {
     }
 
     const trimmedCity = city?.trim() ?? '';
-    // Area filter includes city so address matching checks both area and city tokens
     const areaFilter = trimmedCity ? `${trimmedArea}, ${trimmedCity}` : trimmedArea;
 
     const pages = Math.min(Math.max(maxPages, 1), MAX_PAGES);
     const queries = uniqueKeywords.map((kw) => buildSearchQuery(kw, trimmedArea, trimmedCity));
 
     // Pre-check daily budget for the entire sweep (worst case: all fresh searches)
-    // Cache hits won't count, but we check upfront to prevent partial sweeps
     const maxPossibleCalls = uniqueKeywords.length * pages;
     await this.checkDailyApiBudget(maxPossibleCalls);
 
-    // Run queries sequentially with cross-query dedup.
-    // If an earlier query already found a place, later queries can skip pages that return the same places.
+    // ─── Phase 1: Fetch page 1 for ALL keywords in parallel (batches of 5) ───
+    const BATCH_SIZE = 5;
+    this.logger.log(`Sweep phase 1: fetching page 1 for ${queries.length} keywords in parallel (batches of ${BATCH_SIZE})`);
+
+    const page1Results: SearchGoogleLeadsResult[] = [];
+    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+      const batchQueries = queries.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batchQueries.map((query) => this.searchGoogleLeads(query, 1, false, searchedBy, phoneOnly, areaFilter))
+      );
+      page1Results.push(...batchResults);
+    }
+
+    // ─── Phase 2: Cross-keyword dedup on page 1 — decide which keywords need more pages ───
     const seenPlaceIds = new Set<string>();
     const seenPhones = new Set<string>();
     const merged: GoogleLeadResult[] = [];
     let totalApiCalls = 0;
 
-    for (let qi = 0; qi < queries.length; qi++) {
-      const query = queries[qi];
-      this.logger.log(`Sweep query ${qi + 1}/${queries.length}: "${query}"`);
+    // First pass: collect all page 1 results and track per-keyword new count
+    const keywordStats: { index: number; newCount: number; totalCount: number; result: SearchGoogleLeadsResult }[] = [];
 
-      const result = await this.searchGoogleLeads(query, pages, false, searchedBy, phoneOnly, areaFilter);
+    for (let i = 0; i < page1Results.length; i++) {
+      const result = page1Results[i];
       totalApiCalls += result.api_calls_made;
 
       let newFromThisQuery = 0;
@@ -724,16 +737,75 @@ export class GoogleLeadsService {
         newFromThisQuery++;
       }
 
-      this.logger.log(`Sweep query "${query}": ${result.results.length} results, ${newFromThisQuery} new, ${result.api_calls_made} API calls`);
+      keywordStats.push({
+        index: i,
+        newCount: newFromThisQuery,
+        totalCount: result.results.length,
+        result,
+      });
 
-      // Don't skip remaining keywords — different keywords (PG vs Hostel) can return different places.
-      // Just log the stats for visibility.
+      this.logger.log(`Sweep page1 "${queries[i]}": ${result.results.length} results, ${newFromThisQuery} new, ${result.api_calls_made} API calls`);
+    }
+
+    // ─── Phase 3: Fetch remaining pages only for keywords with >20% new results on page 1 ───
+    if (pages > 1) {
+      const keywordsNeedingMorePages = keywordStats.filter((ks) => {
+        if (ks.totalCount === 0) return false;
+        const newRate = ks.newCount / ks.totalCount;
+        const shouldSkip = newRate < 0.2;
+        if (shouldSkip) {
+          this.logger.log(`Skipping pages 2-${pages} for "${queries[ks.index]}": page 1 was ${Math.round((1 - newRate) * 100)}% duplicates`);
+        }
+        return !shouldSkip;
+      });
+
+      if (keywordsNeedingMorePages.length > 0) {
+        this.logger.log(`Sweep phase 3: fetching pages 2-${pages} for ${keywordsNeedingMorePages.length}/${queries.length} keywords in parallel`);
+
+        // Fetch remaining pages for qualifying keywords in parallel
+        const remainingPagesResults: SearchGoogleLeadsResult[] = [];
+        for (let i = 0; i < keywordsNeedingMorePages.length; i += BATCH_SIZE) {
+          const batch = keywordsNeedingMorePages.slice(i, i + BATCH_SIZE);
+          const batchResults = await Promise.all(
+            batch.map((ks) => this.searchGoogleLeads(queries[ks.index], pages, false, searchedBy, phoneOnly, areaFilter))
+          );
+          remainingPagesResults.push(...batchResults);
+        }
+
+        // Merge remaining pages results (dedup against already-seen)
+        for (let bi = 0; bi < keywordsNeedingMorePages.length; bi++) {
+          const fullResult = remainingPagesResults[bi];
+          totalApiCalls += fullResult.api_calls_made;
+
+          // Subtract page 1 API calls already counted
+          const page1Calls = keywordsNeedingMorePages[bi].result.api_calls_made;
+          totalApiCalls -= page1Calls;
+
+          let newFromRemaining = 0;
+          for (const lead of fullResult.results) {
+            const hasPlaceId = lead.google_place_id && seenPlaceIds.has(lead.google_place_id);
+            const hasPhone = lead.phone && seenPhones.has(lead.phone);
+            if (hasPlaceId || hasPhone) continue;
+
+            if (lead.google_place_id) seenPlaceIds.add(lead.google_place_id);
+            if (lead.phone) seenPhones.add(lead.phone);
+            merged.push(lead);
+            newFromRemaining++;
+          }
+
+          this.logger.log(`Sweep full "${queries[keywordsNeedingMorePages[bi].index]}": ${fullResult.results.length} total results, ${newFromRemaining} new after dedup, ${fullResult.api_calls_made} API calls`);
+        }
+      } else {
+        this.logger.log(`Sweep phase 3: all keywords skipped (page 1 was mostly duplicates)`);
+      }
     }
 
     const total = merged.length;
     const newCount = merged.filter((r) => !r.already_imported).length;
     const dupCount = merged.filter((r) => r.already_imported).length;
     const withPhoneCount = merged.filter((r) => r.phone).length;
+
+    this.logger.log(`Sweep complete: ${merged.length} unique leads, ${totalApiCalls} total API calls`);
 
     return {
       query: `Sweep: ${uniqueKeywords.length} keywords in ${area.trim()}`,
