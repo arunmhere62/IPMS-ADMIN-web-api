@@ -44,12 +44,6 @@ export class AuthService {
     return otp;
   }
 
-  private hashOtp(identifier: string, otp: string) {
-    return createHmac('sha256', this.otpSecret)
-      .update(`${identifier}:${otp}`)
-      .digest('hex');
-  }
-
   // ─── Token & Session helpers ───
 
   private hashRefreshToken(token: string): string {
@@ -143,7 +137,7 @@ export class AuthService {
         identifier: phone,
         channel: 'SMS',
         purpose: 'WEB_LOGIN',
-        otp_hash: this.hashOtp(phone, otp),
+        otp_hash: otp,
         expires_at: expiresAt,
         max_attempts: this.otpMaxAttempts,
         attempt_count: 0,
@@ -228,8 +222,7 @@ export class AuthService {
       throw new UnauthorizedException('OTP attempts exceeded');
     }
 
-    const otpHash = this.hashOtp(phone, otp);
-    const ok = otpHash === request.otp_hash;
+    const ok = otp === request.otp_hash;
 
     await this.managementPrisma.$transaction(async (tx) => {
       await tx.otp_attempt.create({

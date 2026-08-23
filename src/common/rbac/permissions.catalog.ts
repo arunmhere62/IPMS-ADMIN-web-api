@@ -79,6 +79,13 @@ export const ADMIN_PERMISSIONS = {
     MANAGE: makePermission('subscription_plans', 'manage', 'Manage subscription plans'),
   },
 
+  // Subscription records (user subscriptions + payments)
+  SUBSCRIPTIONS: {
+    VIEW: makePermission('subscriptions', 'view', 'View user subscriptions and payments'),
+    UPDATE: makePermission('subscriptions', 'update', 'Update subscription payment and user subscription status'),
+    MANAGE: makePermission('subscriptions', 'manage', 'Manage all subscriptions and payments'),
+  },
+
   // Legal documents
   LEGAL_DOCUMENTS: {
     VIEW: makePermission('legal_documents', 'view', 'View legal documents'),

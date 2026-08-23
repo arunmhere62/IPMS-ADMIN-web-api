@@ -5,6 +5,7 @@ import { S3Module } from './s3/s3.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { SubscriptionPlansModule } from './subscription-plans/subscription-plans.module';
+import { SubscriptionManagementModule } from './subscription-management/subscription-management.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { RolesModule } from './roles/roles.module';
 import { RolePermissionsModule } from './role-permissions/role-permissions.module';
@@ -36,6 +37,7 @@ import { SalesOrganizationsModule } from './sales-organizations/sales-organizati
     TicketsModule,
     OrganizationsModule,
     SubscriptionPlansModule,
+    SubscriptionManagementModule,
     PermissionsModule,
     RolesModule,
     RolePermissionsModule,
