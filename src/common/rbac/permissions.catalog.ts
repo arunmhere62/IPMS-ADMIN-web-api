@@ -86,6 +86,15 @@ export const ADMIN_PERMISSIONS = {
     MANAGE: makePermission('subscriptions', 'manage', 'Manage all subscriptions and payments'),
   },
 
+  // Coupons
+  COUPONS: {
+    VIEW: makePermission('coupons', 'view', 'View coupons'),
+    CREATE: makePermission('coupons', 'create', 'Create coupons'),
+    UPDATE: makePermission('coupons', 'update', 'Update coupons'),
+    DELETE: makePermission('coupons', 'delete', 'Delete/deactivate coupons'),
+    MANAGE: makePermission('coupons', 'manage', 'Manage all coupons'),
+  },
+
   // Legal documents
   LEGAL_DOCUMENTS: {
     VIEW: makePermission('legal_documents', 'view', 'View legal documents'),

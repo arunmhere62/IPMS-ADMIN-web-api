@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { SubscriptionPlansModule } from './subscription-plans/subscription-plans.module';
 import { SubscriptionManagementModule } from './subscription-management/subscription-management.module';
+import { CouponsModule } from './coupons/coupons.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { RolesModule } from './roles/roles.module';
 import { RolePermissionsModule } from './role-permissions/role-permissions.module';
@@ -38,6 +39,7 @@ import { SalesOrganizationsModule } from './sales-organizations/sales-organizati
     OrganizationsModule,
     SubscriptionPlansModule,
     SubscriptionManagementModule,
+    CouponsModule,
     PermissionsModule,
     RolesModule,
     RolePermissionsModule,
