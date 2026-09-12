@@ -1,7 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ManagementPrismaService } from '../prisma/management-prisma.service';
 import { ConsumerPrismaService } from '../prisma/consumer-prisma.service';
 import { toE164 } from '../common/utils/phone.util';
+
+export type ContactAccess = {
+  userId: number;
+  organizationId: number | null;
+  isSuperAdmin: boolean;
+};
 
 @Injectable()
 export class CrmService {
@@ -9,6 +15,12 @@ export class CrmService {
     private readonly prisma: ManagementPrismaService,
     private readonly consumerPrisma: ConsumerPrismaService,
   ) {}
+
+  private contactScope(access: ContactAccess) {
+    if (access.isSuperAdmin) return {};
+    if (!access.organizationId) throw new ForbiddenException('Your user is not assigned to an organization');
+    return { organization_id: access.organizationId };
+  }
 
   // CONTACTS
   private async enrichWithLocation<T extends { country_id?: number | null; state_id?: number | null; city_id?: number | null }>(
@@ -47,10 +59,10 @@ export class CrmService {
     }));
   }
 
-  async listContacts(params: { page?: number; limit?: number; search?: string; city?: string; status?: string; source?: string; sortBy?: string; sortOrder?: string }): Promise<[any[], number]> {
+  async listContacts(params: { page?: number; limit?: number; search?: string; city?: string; status?: string; source?: string; sortBy?: string; sortOrder?: string }, access: ContactAccess): Promise<[any[], number]> {
     const page = Math.max(1, Number(params.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(params.limit ?? 20)));
-    const where: any = { is_deleted: false };
+    const where: any = { is_deleted: false, ...this.contactScope(access) };
 
     if (params.search) {
       const q = params.search.trim();
@@ -78,6 +90,7 @@ export class CrmService {
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.crm_contacts.findMany({
         where,
+        include: { user: { select: { s_no: true, name: true, email: true } } },
         orderBy: { [sortBy]: sortOrder },
         skip: (page - 1) * limit,
         take: limit,
@@ -93,7 +106,7 @@ export class CrmService {
    * Checks rows against DB (existing contacts) AND within the batch itself.
    * Returns per-row duplicate status with reason + matched existing contact info.
    */
-  async checkDuplicates(rows: any[]): Promise<{
+  async checkDuplicates(rows: any[], access: ContactAccess): Promise<{
     total: number;
     duplicates: number;
     unique: number;
@@ -130,7 +143,7 @@ export class CrmService {
 
     const existing = orConditions.length
       ? await this.prisma.crm_contacts.findMany({
-          where: { OR: orConditions, is_deleted: false },
+          where: { OR: orConditions, is_deleted: false, ...this.contactScope(access) },
           select: { s_no: true, pg_name: true, phone: true, whatsapp_number: true },
         })
       : [];
@@ -197,8 +210,13 @@ export class CrmService {
     };
   }
 
-  async createContact(data: Parameters<typeof this.prisma.crm_contacts.create>[0]['data']) {
+  async createContact(data: Parameters<typeof this.prisma.crm_contacts.create>[0]['data'], access: ContactAccess) {
     const payload = { ...data } as any;
+    delete payload.organization_id;
+    delete payload.created_by;
+    if (!access.organizationId) throw new ForbiddenException('Your user is not assigned to an organization');
+    payload.organization_id = access.organizationId;
+    payload.created_by = access.userId;
     if (payload.phone) payload.phone = toE164(payload.phone);
     if (payload.alternate_phone) payload.alternate_phone = toE164(payload.alternate_phone);
     if (payload.whatsapp_number) payload.whatsapp_number = toE164(payload.whatsapp_number);
@@ -211,7 +229,7 @@ export class CrmService {
 
     if (orConditions.length) {
       const existing = await this.prisma.crm_contacts.findFirst({
-        where: { OR: orConditions, is_deleted: false },
+        where: { OR: orConditions, is_deleted: false, ...this.contactScope(access) },
         select: { s_no: true, phone: true, whatsapp_number: true, pg_name: true },
       });
       if (existing) {
@@ -226,12 +244,13 @@ export class CrmService {
     return this.prisma.crm_contacts.create({ data: payload });
   }
 
-  async bulkImportContacts(rows: any[], filename: string, uploadedBy?: number) {
+  async bulkImportContacts(rows: any[], filename: string, access: ContactAccess) {
+    if (!access.organizationId) throw new ForbiddenException('Your user is not assigned to an organization');
     const batch = await this.prisma.crm_import_batches.create({
       data: {
         filename,
         total_rows: rows.length,
-        uploaded_by: uploadedBy ?? 1,
+        uploaded_by: access.userId,
       },
     });
 
@@ -311,7 +330,7 @@ export class CrmService {
 
     const existingContacts = orConditions.length
       ? await this.prisma.crm_contacts.findMany({
-          where: { OR: orConditions, is_deleted: false },
+          where: { OR: orConditions, is_deleted: false, ...this.contactScope(access) },
           select: { phone: true, whatsapp_number: true, pg_name: true },
         })
       : [];
@@ -443,6 +462,8 @@ export class CrmService {
             notes: toNull(row.notes),
             source: source as any,
             import_batch_id: batch.s_no,
+            organization_id: access.organizationId,
+            created_by: access.userId,
           },
         });
         imported++;
@@ -478,35 +499,40 @@ export class CrmService {
     };
   }
 
-  async getContact(id: number) {
-    const data = await this.prisma.crm_contacts.findUnique({ where: { s_no: id } });
+  async getContact(id: number, access: ContactAccess) {
+    const data = await this.prisma.crm_contacts.findFirst({
+      where: { s_no: id, is_deleted: false, ...this.contactScope(access) },
+      include: { user: { select: { s_no: true, name: true, email: true } } },
+    });
     if (!data) throw new NotFoundException('Contact not found');
     const [enriched] = await this.enrichWithLocation([data]);
     return enriched;
   }
 
-  async updateContact(id: number, data: Parameters<typeof this.prisma.crm_contacts.update>[0]['data']) {
-    await this.getContact(id);
+  async updateContact(id: number, data: Parameters<typeof this.prisma.crm_contacts.update>[0]['data'], access: ContactAccess) {
+    await this.getContact(id, access);
     const payload = { ...data } as any;
+    delete payload.organization_id;
+    delete payload.created_by;
     if (payload.phone) payload.phone = toE164(payload.phone);
     if (payload.alternate_phone) payload.alternate_phone = toE164(payload.alternate_phone);
     if (payload.whatsapp_number) payload.whatsapp_number = toE164(payload.whatsapp_number);
     return this.prisma.crm_contacts.update({ where: { s_no: id }, data: payload });
   }
 
-  async softDeleteContact(id: number) {
-    await this.getContact(id);
+  async softDeleteContact(id: number, access: ContactAccess) {
+    await this.getContact(id, access);
     return this.prisma.crm_contacts.update({ where: { s_no: id }, data: { is_deleted: true } });
   }
 
-  async bulkConvertContactsToLead(contactIds: number[], assigned_to?: number) {
+  async bulkConvertContactsToLead(contactIds: number[], assigned_to: number | undefined, access: ContactAccess) {
     if (!contactIds?.length) {
       return { total: 0, converted: 0, skipped: 0, failed: 0, errors: [] };
     }
 
     // Fetch valid, non-deleted contacts
     const contacts = await this.prisma.crm_contacts.findMany({
-      where: { s_no: { in: contactIds }, is_deleted: false },
+      where: { s_no: { in: contactIds }, is_deleted: false, ...this.contactScope(access) },
       select: { s_no: true },
     });
     const validIds = contacts.map((c) => c.s_no);
@@ -606,9 +632,9 @@ export class CrmService {
     return total;
   }
 
-  async convertContactToLead(contactId: number, assigned_to?: number) {
+  async convertContactToLead(contactId: number, assigned_to: number | undefined, access: ContactAccess) {
     // ensure contact exists
-    const contact = await this.getContact(contactId);
+    const contact = await this.getContact(contactId, access);
     const lead = await this.prisma.crm_leads.upsert({
       where: { contact_id: contactId },
       update: assigned_to
@@ -624,10 +650,10 @@ export class CrmService {
     return lead;
   }
 
-  async listLeads(params: { page?: number; limit?: number; stage?: string; priority?: string; assigned_to?: number; search?: string; sortBy?: string; sortOrder?: string; scoreMin?: number; scoreMax?: number }): Promise<[any[], number]> {
+  async listLeads(params: { page?: number; limit?: number; stage?: string; priority?: string; assigned_to?: number; search?: string; sortBy?: string; sortOrder?: string; scoreMin?: number; scoreMax?: number }, access: ContactAccess): Promise<[any[], number]> {
     const page = Math.max(1, Number(params.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(params.limit ?? 20)));
-    const where: any = { is_deleted: false };
+    const where: any = { is_deleted: false, crm_contacts: this.contactScope(access) };
     if (params.stage) where.stage = params.stage as any;
     if (params.priority) where.priority = params.priority as any;
     if (params.assigned_to) where.assigned_to = Number(params.assigned_to);
@@ -691,8 +717,8 @@ export class CrmService {
     return [enrichedLeads, total];
   }
 
-  async getLead(id: number) {
-    const data = await this.prisma.crm_leads.findUnique({ where: { s_no: id }, include: { crm_contacts: true, user: true, crm_lead_stages: true } });
+  async getLead(id: number, access: ContactAccess) {
+    const data = await this.prisma.crm_leads.findFirst({ where: { s_no: id, crm_contacts: this.contactScope(access) }, include: { crm_contacts: true, user: true, crm_lead_stages: true } });
     if (!data) throw new NotFoundException('Lead not found');
     if (data.crm_contacts) {
       const [enriched] = await this.enrichWithLocation([data.crm_contacts]);
@@ -701,8 +727,8 @@ export class CrmService {
     return data;
   }
 
-  async updateLead(id: number, data: Parameters<typeof this.prisma.crm_leads.update>[0]['data']) {
-    await this.getLead(id);
+  async updateLead(id: number, data: Parameters<typeof this.prisma.crm_leads.update>[0]['data'], access: ContactAccess) {
+    await this.getLead(id, access);
 
     // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
     // Prisma expects ISO-8601 for DateTime fields, but the frontend sends date-only strings
@@ -727,15 +753,15 @@ export class CrmService {
     return updated;
   }
 
-  async updateLeadStage(id: number, stage: any) {
-    await this.getLead(id);
+  async updateLeadStage(id: number, stage: any, access: ContactAccess) {
+    await this.getLead(id, access);
     const updated = await this.prisma.crm_leads.update({ where: { s_no: id }, data: { stage } });
     await this.recalculateScore(id);
     return updated;
   }
 
-  async softDeleteLead(id: number) {
-    await this.getLead(id);
+  async softDeleteLead(id: number, access: ContactAccess) {
+    await this.getLead(id, access);
     return this.prisma.crm_leads.update({
       where: { s_no: id },
       data: { is_deleted: true, deleted_at: new Date() },
@@ -743,13 +769,14 @@ export class CrmService {
   }
 
   // ACTIVITIES
-  listActivities(leadId: number) {
+  async listActivities(leadId: number, access: ContactAccess) {
+    await this.getLead(leadId, access);
     return this.prisma.crm_lead_activities.findMany({ where: { lead_id: leadId, is_deleted: false }, orderBy: { created_at: 'desc' } });
   }
 
-  async createActivity(leadId: number, data: Parameters<typeof this.prisma.crm_lead_activities.create>[0]['data']) {
+  async createActivity(leadId: number, data: Parameters<typeof this.prisma.crm_lead_activities.create>[0]['data'], access: ContactAccess) {
     // ensure lead exists
-    await this.getLead(leadId);
+    await this.getLead(leadId, access);
     const { user_id, ...rest } = (data as any) ?? {};
 
     // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
@@ -777,9 +804,10 @@ export class CrmService {
     return activity;
   }
 
-  async updateActivity(activityId: number, data: any) {
+  async updateActivity(activityId: number, data: any, access: ContactAccess) {
     const existing = await this.prisma.crm_lead_activities.findUnique({ where: { s_no: activityId } });
     if (!existing) throw new NotFoundException('Activity not found');
+    await this.getLead(existing.lead_id, access);
 
     const { user_id, lead_id, s_no, created_at, ...rest } = data ?? {};
 
@@ -808,9 +836,10 @@ export class CrmService {
     return updated;
   }
 
-  async deleteActivity(activityId: number) {
+  async deleteActivity(activityId: number, access: ContactAccess) {
     const existing = await this.prisma.crm_lead_activities.findUnique({ where: { s_no: activityId } });
     if (!existing) throw new NotFoundException('Activity not found');
+    await this.getLead(existing.lead_id, access);
     const deleted = await this.prisma.crm_lead_activities.update({
       where: { s_no: activityId },
       data: { is_deleted: true },
@@ -822,10 +851,10 @@ export class CrmService {
   }
 
   // SITE VISITS
-  listSiteVisits(params: { page?: number; limit?: number; assigned_to?: number; status?: string; date?: string }) {
+  listSiteVisits(params: { page?: number; limit?: number; assigned_to?: number; status?: string; date?: string }, access: ContactAccess) {
     const page = Math.max(1, Number(params.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(params.limit ?? 20)));
-    const where: any = { is_deleted: false };
+    const where: any = { is_deleted: false, crm_contacts: this.contactScope(access) };
     if (params.assigned_to) where.assigned_to = Number(params.assigned_to);
     if (params.status) where.status = params.status as any;
     if (params.date) where.visit_date = { gte: new Date(params.date), lt: new Date(new Date(params.date).getTime() + 86400000) };
@@ -836,8 +865,8 @@ export class CrmService {
     ]);
   }
 
-  async scheduleVisit(contactId: number, data: Parameters<typeof this.prisma.crm_site_visits.create>[0]['data']) {
-    await this.getContact(contactId);
+  async scheduleVisit(contactId: number, data: Parameters<typeof this.prisma.crm_site_visits.create>[0]['data'], access: ContactAccess) {
+    await this.getContact(contactId, access);
     const { assigned_to, lead_id, ...rest } = (data as any) ?? {};
 
     // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
@@ -863,9 +892,10 @@ export class CrmService {
     });
   }
 
-  async updateVisit(id: number, data: Parameters<typeof this.prisma.crm_site_visits.update>[0]['data']) {
+  async updateVisit(id: number, data: Parameters<typeof this.prisma.crm_site_visits.update>[0]['data'], access: ContactAccess) {
     const existing = await this.prisma.crm_site_visits.findUnique({ where: { s_no: id } });
     if (!existing) throw new NotFoundException('Visit not found');
+    await this.getContact(existing.contact_id, access);
 
     // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
     const payload = { ...data } as any;
@@ -932,8 +962,8 @@ export class CrmService {
     return data;
   }
 
-  async convertLeadToSubscriber(leadId: number, data: Parameters<typeof this.prisma.crm_subscribers.create>[0]['data']) {
-    await this.getLead(leadId);
+  async convertLeadToSubscriber(leadId: number, data: Parameters<typeof this.prisma.crm_subscribers.create>[0]['data'], access: ContactAccess) {
+    await this.getLead(leadId, access);
     const { user_id, ...rest } = (data as any) ?? {};
     const sub = await this.prisma.crm_subscribers.upsert({
       where: { lead_id: leadId },

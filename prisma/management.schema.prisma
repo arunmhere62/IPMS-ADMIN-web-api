@@ -11,6 +11,8 @@ datasource db {
 
 model crm_contacts {
   s_no                Int                 @id @default(autoincrement())
+  organization_id     Int?
+  created_by          Int?
   pg_name             String              @db.VarChar(200)
   owner_name          String?             @db.VarChar(150)
   designation         String?             @db.VarChar(100)
@@ -44,6 +46,8 @@ model crm_contacts {
   latitude            Decimal?            @db.Decimal(10, 7)
   longitude           Decimal?            @db.Decimal(10, 7)
   crm_import_batches  crm_import_batches? @relation(fields: [import_batch_id], references: [s_no], onUpdate: NoAction, map: "fk_crm_contact_batch")
+  user                user?               @relation(fields: [created_by], references: [s_no], onDelete: Restrict, onUpdate: Restrict, map: "fk_crm_contacts_created_by")
+  sales_organization  sales_organization? @relation(fields: [organization_id], references: [s_no], onDelete: Restrict, onUpdate: Restrict, map: "fk_crm_contacts_organization")
   crm_leads           crm_leads?
   crm_site_visits     crm_site_visits[]
 
@@ -56,6 +60,8 @@ model crm_contacts {
   @@index([state_id], map: "idx_crm_contact_state_id")
   @@index([status], map: "idx_crm_contact_status")
   @@index([google_place_id], map: "idx_crm_contact_google_place_id")
+  @@index([created_by], map: "idx_crm_contacts_created_by")
+  @@index([organization_id], map: "idx_crm_contacts_organization_id")
 }
 
 model crm_import_batches {
@@ -192,13 +198,14 @@ model crm_subscribers {
 }
 
 model sales_organization {
-  s_no        Int                 @id @default(autoincrement())
-  name        String              @db.VarChar(150)
-  description String?             @db.Text
-  status      organization_status @default(ACTIVE)
-  created_at  DateTime            @default(now()) @db.DateTime(0)
-  updated_at  DateTime            @default(now()) @db.DateTime(0)
-  user        user[]
+  s_no         Int                 @id @default(autoincrement())
+  name         String              @db.VarChar(150)
+  description  String?             @db.Text
+  status       organization_status @default(ACTIVE)
+  created_at   DateTime            @default(now()) @db.DateTime(0)
+  updated_at   DateTime            @default(now()) @db.DateTime(0)
+  crm_contacts crm_contacts[]
+  user         user[]
 
   @@index([status], map: "idx_org_status")
 }
@@ -325,6 +332,7 @@ model user {
   is_active                 Boolean                    @default(true)
   created_at                DateTime                   @default(now()) @db.DateTime(0)
   updated_at                DateTime                   @default(now()) @db.DateTime(0)
+  crm_contacts              crm_contacts[]
   crm_import_batches        crm_import_batches[]
   crm_lead_activities       crm_lead_activities[]
   crm_leads                 crm_leads[]
