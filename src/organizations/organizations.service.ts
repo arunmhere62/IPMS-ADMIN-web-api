@@ -54,6 +54,9 @@ export class OrganizationsService {
           status: true,
           is_deleted: true,
           superadmin_id: true,
+          users_organization_superadmin_idTousers: {
+            select: { signup_source: true },
+          },
           created_at: true,
           updated_at: true,
           pg_locations: {
@@ -150,6 +153,7 @@ export class OrganizationsService {
         status: org.status,
         is_deleted: org.is_deleted,
         superadmin_id: org.superadmin_id,
+        signup_source: org.users_organization_superadmin_idTousers?.signup_source ?? 'UNKNOWN',
         created_at: org.created_at,
         updated_at: org.updated_at,
         pg_locations_count: pgLocations.length,
@@ -182,6 +186,9 @@ export class OrganizationsService {
         status: true,
         is_deleted: true,
         superadmin_id: true,
+        users_organization_superadmin_idTousers: {
+          select: { signup_source: true },
+        },
         created_at: true,
         updated_at: true,
         pg_locations: {
@@ -285,6 +292,7 @@ export class OrganizationsService {
         status: org.status,
         is_deleted: org.is_deleted,
         superadmin_id: org.superadmin_id,
+        signup_source: org.users_organization_superadmin_idTousers?.signup_source ?? 'UNKNOWN',
         created_at: org.created_at,
         updated_at: org.updated_at,
         pg_locations_count: pgLocations.length,
