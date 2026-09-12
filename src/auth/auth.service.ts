@@ -326,6 +326,35 @@ export class AuthService {
     );
   }
 
+  async refreshPermissions(userId: number) {
+    const user = await this.managementPrisma.user.findUnique({
+      where: { s_no: userId },
+      include: { role: true, sales_organization: true },
+    });
+    if (!user?.is_active) {
+      throw new UnauthorizedException('User account is inactive');
+    }
+
+    const permissions = await this.rbacService.getUserPermissions(user.s_no);
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.s_no,
+      phone: user.phone,
+      email: user.email,
+      role: user.role?.name,
+      permissions: Array.from(permissions),
+      organization_id: user.organization_id,
+    });
+
+    return ResponseUtil.success({
+      accessToken,
+      permissions: Array.from(permissions),
+      role: user.role?.name ?? null,
+      organization: user.sales_organization
+        ? { s_no: user.sales_organization.s_no, name: user.sales_organization.name }
+        : null,
+    }, 'Permissions refreshed successfully');
+  }
+
   // ─── Refresh Token with Rotation ───
 
   async refreshTokens(dto: RefreshTokenDto, requestMeta?: { ip?: string; userAgent?: string }) {

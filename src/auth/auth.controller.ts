@@ -1,4 +1,5 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { SendOtpDto } from './dto/send-otp.dto';
@@ -8,10 +9,10 @@ import { Public } from '../common/decorators/public.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
-@Public()
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Public()
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP to user phone number (for web login)' })
@@ -25,6 +26,7 @@ export class AuthController {
     return this.authService.sendOtp(dto, { ip, userAgent });
   }
 
+  @Public()
   @Post('resend-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP to user phone number (for web login)' })
@@ -38,6 +40,7 @@ export class AuthController {
     return this.authService.resendOtp(dto, { ip, userAgent });
   }
 
+  @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify OTP and login user (web)' })
@@ -51,6 +54,7 @@ export class AuthController {
     return this.authService.verifyOtp(dto, { ip, userAgent });
   }
 
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token using refresh token (with rotation)' })
@@ -65,6 +69,15 @@ export class AuthController {
     return this.authService.refreshTokens(dto, { ip, userAgent });
   }
 
+  @Post('refresh-permissions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh the current user permissions and access token' })
+  @ApiResponse({ status: 200, description: 'Permissions refreshed successfully' })
+  async refreshPermissions(@Req() req: Request) {
+    return this.authService.refreshPermissions(Number(req.user?.sub));
+  }
+
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Logout user by revoking refresh token session' })
