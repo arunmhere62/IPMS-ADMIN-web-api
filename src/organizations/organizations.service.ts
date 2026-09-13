@@ -485,6 +485,7 @@ export class OrganizationsService {
           tenant_id: true,
           name: true,
           phone_no: true,
+          whatsapp_number: true,
           email: true,
           status: true,
           check_in_date: true,
@@ -520,6 +521,24 @@ export class OrganizationsService {
       }),
     ]);
 
+    const [tenantActivity, userActivity] = await Promise.all([
+      this.consumerPrisma.user_activity_logs.findMany({
+        where: { tenant_id: { in: tenants.map((tenant) => tenant.s_no) } },
+        select: { tenant_id: true, created_at: true },
+        orderBy: { created_at: 'desc' },
+        distinct: ['tenant_id'],
+      }),
+      this.consumerPrisma.user_activity_logs.findMany({
+        where: { user_id: { in: employees.map((employee) => employee.users.s_no) } },
+        select: { user_id: true, created_at: true },
+        orderBy: { created_at: 'desc' },
+        distinct: ['user_id'],
+      }),
+    ]);
+
+    const tenantActivityById = new Map(tenantActivity.map((activity) => [activity.tenant_id, activity.created_at]));
+    const userActivityById = new Map(userActivity.map((activity) => [activity.user_id, activity.created_at]));
+
     const roomsWithCounts = rooms.map((room) => ({
       s_no: room.s_no,
       room_no: room.room_no,
@@ -537,6 +556,12 @@ export class OrganizationsService {
       })),
     );
 
+    const tenantsList = tenants.map((tenant) => ({
+      ...tenant,
+      has_app_activity: tenantActivityById.has(tenant.s_no),
+      last_app_activity_at: tenantActivityById.get(tenant.s_no) ?? null,
+    }));
+
     const employeesList = employees.map((e) => ({
       s_no: e.s_no,
       user_id: e.users.s_no,
@@ -546,6 +571,8 @@ export class OrganizationsService {
       status: e.users.status,
       monthly_salary_amount: e.monthly_salary_amount,
       created_at: e.created_at,
+      has_app_activity: userActivityById.has(e.users.s_no),
+      last_app_activity_at: userActivityById.get(e.users.s_no) ?? null,
     }));
 
     return ResponseUtil.success(
@@ -557,7 +584,7 @@ export class OrganizationsService {
         employees_count: employees.length,
         rooms: roomsWithCounts,
         beds: allBeds,
-        tenants,
+        tenants: tenantsList,
         employees: employeesList,
       },
       'PG details fetched successfully',
