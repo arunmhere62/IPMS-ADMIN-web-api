@@ -14,6 +14,9 @@ import { MessagesService } from './messages.service';
 import { VariableResolverService } from './variable-resolver.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { PreviewMessageDto } from './dto/preview-message.dto';
+import { TestWhatsAppDto } from './dto/test-whatsapp.dto';
+import { BulkSendMessageDto } from './dto/bulk-send-message.dto';
+import { RequestTimeout } from '../common/decorators/request-timeout.decorator';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
 import { ResponseUtil } from '../common/utils/response.util';
@@ -59,6 +62,29 @@ export class MessagesController {
     @Headers('x-user-id') userId: string,
   ) {
     return this.messagesService.send(dto, parseInt(userId, 10));
+  }
+
+  @Post('bulk-send')
+  @RequestTimeout(120000)
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.SEND))
+  @UseGuards(HeadersValidationGuard)
+  @RequireHeaders({ user_id: true })
+  async bulkSend(
+    @Body() dto: BulkSendMessageDto,
+    @Headers('x-user-id') userId: string,
+  ) {
+    return this.messagesService.bulkSend(dto, parseInt(userId, 10));
+  }
+
+  @Post('test-whatsapp')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.MESSAGES.SEND))
+  @UseGuards(HeadersValidationGuard)
+  @RequireHeaders({ user_id: true })
+  async testWhatsApp(
+    @Body() dto: TestWhatsAppDto,
+    @Headers('x-user-id') userId: string,
+  ) {
+    return this.messagesService.testWhatsApp(dto, parseInt(userId, 10));
   }
 
   @Get()

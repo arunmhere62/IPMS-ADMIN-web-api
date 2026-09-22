@@ -7,6 +7,16 @@ export interface MessagePayload {
   entityId: number;
   senderUserId: number;
   sendMode?: 'MANUAL' | 'API';
+  templateId?: number;
+  metaTemplateName?: string;
+  metaTemplateId?: string;
+  language?: string;
+  campaignName?: string;
+  mediaUrl?: string;
+  mediaId?: string;
+  filename?: string;
+  variables?: Record<string, string>;
+  contacts?: { Numbers: string }[];
 }
 
 export interface SendResult {

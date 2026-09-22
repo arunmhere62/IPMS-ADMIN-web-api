@@ -44,7 +44,7 @@ export class S3Service {
     isPublic: boolean;
     bucket: string;
   }): Promise<ApiResponseDto<{ url: string; key: string }>> {
-    const { key, contentType, fileData, bucket } = uploadData;
+    const { key, contentType, fileData, bucket, isPublic } = uploadData;
 
     if (!bucket || !key || !contentType || !fileData) {
       throw new BadRequestException('Missing required upload fields');
@@ -58,6 +58,7 @@ export class S3Service {
         Key: key,
         Body: buffer,
         ContentType: contentType,
+        ...(isPublic ? { ACL: 'public-read' } : {}),
       });
 
       await this.s3Client.send(command);
@@ -69,7 +70,7 @@ export class S3Service {
         },
         'File uploaded successfully',
       );
-    } catch (error) {
+    } catch (error: any) {
       throw new InternalServerErrorException(
         error?.message || 'Upload failed',
       );
@@ -94,7 +95,7 @@ export class S3Service {
 
       await this.s3Client.send(command);
       return ResponseUtil.success({ key }, 'File deleted successfully');
-    } catch (error) {
+    } catch (error: any) {
       throw new InternalServerErrorException(
         error?.message || 'Delete failed',
       );
@@ -121,7 +122,7 @@ export class S3Service {
 
       await this.s3Client.send(command);
       return ResponseUtil.success({ keys }, 'Files deleted successfully');
-    } catch (error) {
+    } catch (error: any) {
       throw new InternalServerErrorException(
         error?.message || 'Bulk delete failed',
       );
@@ -146,7 +147,7 @@ export class S3Service {
     try {
       await this.s3Client.send(command);
       return ResponseUtil.success({ exists: true });
-    } catch (error) {
+    } catch (error: any) {
       if (error?.name === 'NotFound' || error?.$metadata?.httpStatusCode === 404) {
         return ResponseUtil.success({ exists: false });
       }

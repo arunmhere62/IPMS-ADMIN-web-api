@@ -1,6 +1,7 @@
 import 'tsconfig-paths/register';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
@@ -60,7 +61,7 @@ async function bootstrap() {
 
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
-    new TimeoutInterceptor(),
+    new TimeoutInterceptor(app.get(Reflector)),
     new PerformanceInterceptor(),
     new TransformInterceptor(),
   );
