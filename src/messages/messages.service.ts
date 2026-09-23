@@ -108,119 +108,71 @@ export class MessagesService {
 
   async bulkSend(dto: BulkSendMessageDto, senderUserId: number) {
     const channel = dto.channel;
-    const adapter = this.getAdapter(channel);
-    const mode: whatsapp_messages_mode = this.getMode(channel, dto.send_mode);
 
     if (channel !== 'WHATSAPP') {
       throw new BadRequestException('Bulk send is currently only supported for WhatsApp');
     }
 
-    const template = dto.template_id
-      ? await this.consumerPrisma.whatsapp_templates.findUnique({
-          where: { s_no: dto.template_id },
-        })
-      : null;
+    const results: {
+      entity_id: number;
+      success: boolean;
+      data?: any;
+      error?: string;
+    }[] = [];
 
-    const firstEntityVars = await this.variableResolver.resolve({
-      entityType: dto.entity_type,
-      entityId: dto.entity_ids[0],
-      senderUserId,
-      manualVariables: dto.manual_variables,
-    });
+    let successCount = 0;
+    let failureCount = 0;
 
-    const contacts: { Numbers: string }[] = [];
-    const entityPhoneMap = new Map<number, string>();
+    const sendForEntity = async (entityId: number) => {
+      try {
+        const result = await this.send(
+          {
+            channel: dto.channel,
+            entity_type: dto.entity_type,
+            entity_id: entityId,
+            template_id: dto.template_id,
+            send_mode: dto.send_mode,
+            body: dto.body,
+            manual_variables: dto.manual_variables,
+          } as SendMessageDto,
+          senderUserId,
+        );
+        return { entity_id: entityId, success: true as const, data: result };
+      } catch (error: any) {
+        return { entity_id: entityId, success: false as const, error: error?.message || 'Failed' };
+      }
+    };
 
-    for (const entityId of dto.entity_ids) {
-      const vars = await this.variableResolver.resolve({
-        entityType: dto.entity_type,
-        entityId,
-        senderUserId,
-        manualVariables: dto.manual_variables,
-      });
-      const phone = vars.recipient_phone || vars.phone || vars.recipient_whatsapp || '';
-      if (!phone) continue;
-      contacts.push({ Numbers: phone.replace(/\D/g, '') });
-      entityPhoneMap.set(entityId, phone);
-    }
+    const concurrency = Math.max(1, parseInt(process.env.BULK_SEND_CONCURRENCY || '5', 10));
+    const chunks = this.chunkArray(dto.entity_ids, concurrency);
 
-    if (contacts.length === 0) {
-      throw new BadRequestException('No recipients with phone numbers found');
-    }
-
-    const { body, subject } = await this.resolveAndRender(
-      {
-        channel: dto.channel,
-        entity_type: dto.entity_type,
-        entity_id: dto.entity_ids[0],
-        template_id: dto.template_id,
-        body: dto.body,
-        subject: undefined,
-        manual_variables: dto.manual_variables,
-      } as SendMessageDto,
-      senderUserId,
-    );
-
-    const result = await adapter.send({
-      phone: contacts[0].Numbers,
-      toEmail: undefined,
-      subject,
-      body,
-      entityType: dto.entity_type,
-      entityId: dto.entity_ids[0],
-      senderUserId,
-      sendMode: dto.send_mode as 'MANUAL' | 'API' | undefined,
-      templateId: dto.template_id,
-      metaTemplateName: template?.meta_template_name || undefined,
-      metaTemplateId: template?.meta_template_name || process.env.SMARTGROWTH_DEFAULT_TEMPLATE_ID || undefined,
-      language: template?.language || process.env.SMARTGROWTH_DEFAULT_TEMPLATE_LANGUAGE || undefined,
-      campaignName: template?.display_name || process.env.SMARTGROWTH_DEFAULT_CAMPAIGN_NAME || undefined,
-      mediaUrl: process.env.SMARTGROWTH_DEFAULT_MEDIA_URL,
-      mediaId: process.env.SMARTGROWTH_DEFAULT_MEDIA_ID,
-      filename: process.env.SMARTGROWTH_DEFAULT_MEDIA_FILENAME,
-      variables: firstEntityVars,
-      contacts,
-    });
-
-    const status = result.status as whatsapp_messages_status;
-    const savedMessages: any[] = [];
-
-    for (const [entityId, phone] of entityPhoneMap.entries()) {
-      const message = await this.consumerPrisma.whatsapp_messages.create({
-        data: {
-          phone,
-          to_email: null,
-          subject,
-          message: dto.body,
-          rendered_message: body,
-          variables: firstEntityVars as any,
-          template_id: dto.template_id || null,
-          channel: dto.channel,
-          provider: result.provider,
-          mode,
-          status,
-          provider_msg_id: result.providerMsgId || null,
-          sent_by: senderUserId,
-          entity_type: dto.entity_type,
-          entity_id: entityId,
-          error_message: result.errorMessage || null,
-        } as any,
-      });
-      savedMessages.push(message);
+    for (const chunk of chunks) {
+      const chunkResults = await Promise.all(chunk.map((id) => sendForEntity(id)));
+      for (const result of chunkResults) {
+        results.push(result);
+        if (result.success) successCount++;
+        else failureCount++;
+      }
     }
 
     return ResponseUtil.success(
       {
         total: dto.entity_ids.length,
-        sent_count: contacts.length,
-        skipped_count: dto.entity_ids.length - contacts.length,
-        provider_response: result,
-        messages: savedMessages,
+        sent_count: successCount,
+        success_count: successCount,
+        failure_count: failureCount,
+        results,
       },
-      result.success
-        ? `Bulk WhatsApp campaign sent to ${contacts.length} recipient(s)`
-        : 'Bulk WhatsApp campaign failed',
+      `Bulk send completed: ${successCount} succeeded, ${failureCount} failed`,
     );
+  }
+
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
   }
 
   async testWhatsApp(dto: TestWhatsAppDto, senderUserId: number) {
