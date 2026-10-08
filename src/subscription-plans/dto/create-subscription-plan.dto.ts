@@ -13,7 +13,10 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-const ALLOWED_DURATIONS_DAYS = [30, 180, 365] as const;
+const ALLOWED_DURATIONS_DAYS = [
+  ...Array.from({ length: 24 }, (_, index) => (index + 1) * 30),
+  365,
+] as const;
 
 export class CreateSubscriptionPlanDto {
   @ApiProperty({ example: 'Starter' })
@@ -26,7 +29,10 @@ export class CreateSubscriptionPlanDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 30, description: 'Duration in days (30 = 1 month, 180 = 6 months, 365 = 12 months)' })
+  @ApiProperty({
+    example: 30,
+    description: 'Duration in days (30-day months, up to 24 months; 365 days = 12 months)',
+  })
   @IsInt()
   @Min(1)
   @IsIn(ALLOWED_DURATIONS_DAYS)
