@@ -22,9 +22,10 @@ export class SubscriptionManagementService {
     limit: number;
     status?: string;
     payment_type?: string;
+    organization_id?: number;
     search?: string;
   }) {
-    const { page, limit, status, payment_type, search } = params;
+    const { page, limit, status, payment_type, organization_id, search } = params;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -33,6 +34,9 @@ export class SubscriptionManagementService {
     }
     if (payment_type) {
       where.payment_type = payment_type;
+    }
+    if (organization_id) {
+      where.organization_id = organization_id;
     }
     if (search) {
       // Search across payment fields AND user/org name (no FK relation, so
@@ -264,14 +268,18 @@ export class SubscriptionManagementService {
     page: number;
     limit: number;
     status?: string;
+    organization_id?: number;
     search?: string;
   }) {
-    const { page, limit, status, search } = params;
+    const { page, limit, status, organization_id, search } = params;
     const skip = (page - 1) * limit;
 
     const where: any = {};
     if (status) {
       where.status = status;
+    }
+    if (organization_id) {
+      where.organization_id = organization_id;
     }
 
     const [items, total] = await Promise.all([

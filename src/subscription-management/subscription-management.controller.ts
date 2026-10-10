@@ -33,6 +33,7 @@ export class SubscriptionManagementController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, enum: ['INITIATED', 'SUCCESS', 'FAILURE', 'ABORTED', 'PENDING'] })
   @ApiQuery({ name: 'payment_type', required: false, enum: ['NEW_SUBSCRIPTION', 'RENEWAL', 'UPGRADE'] })
+  @ApiQuery({ name: 'organization_id', required: false, type: Number, description: 'Filter by organization' })
   @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by order_id, tracking_id, or bank_ref_no' })
   @ApiResponse({ status: 200, description: 'Subscription payments fetched successfully' })
   findAllPayments(
@@ -40,6 +41,7 @@ export class SubscriptionManagementController {
     @Query('limit') limit?: string,
     @Query('status') status?: string,
     @Query('payment_type') payment_type?: string,
+    @Query('organization_id') organization_id?: string,
     @Query('search') search?: string,
   ) {
     return this.service.findAllPayments({
@@ -47,6 +49,7 @@ export class SubscriptionManagementController {
       limit: limit ? parseInt(limit, 10) : 10,
       status: status || undefined,
       payment_type: payment_type || undefined,
+      organization_id: organization_id ? parseInt(organization_id, 10) : undefined,
       search: search || undefined,
     });
   }
@@ -82,16 +85,19 @@ export class SubscriptionManagementController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'status', required: false, enum: ['ACTIVE', 'EXPIRED', 'CANCELLED', 'PENDING'] })
+  @ApiQuery({ name: 'organization_id', required: false, type: Number, description: 'Filter by organization' })
   @ApiResponse({ status: 200, description: 'User subscriptions fetched successfully' })
   findAllUserSubscriptions(
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('status') status?: string,
+    @Query('organization_id') organization_id?: string,
   ) {
     return this.service.findAllUserSubscriptions({
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 10,
       status: status || undefined,
+      organization_id: organization_id ? parseInt(organization_id, 10) : undefined,
     });
   }
 
