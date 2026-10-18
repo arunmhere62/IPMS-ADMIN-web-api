@@ -905,7 +905,7 @@ export class CrmService {
   async createActivity(leadId: number, data: Parameters<typeof this.prisma.crm_lead_activities.create>[0]['data'], access: ContactAccess) {
     // ensure lead exists
     await this.getLead(leadId, access);
-    const { user_id, ...rest } = (data as any) ?? {};
+    const { user_id, next_follow_up_date, ...rest } = (data as any) ?? {};
 
     // Normalize date fields: convert "YYYY-MM-DD" to full ISO-8601 DateTime
     const dateFields = ['scheduled_at', 'completed_at'];
@@ -927,7 +927,16 @@ export class CrmService {
         ...(user_id ? { user: { connect: { s_no: Number(user_id) } } } : {}),
       } as any,
     });
-    await this.prisma.crm_leads.update({ where: { s_no: leadId }, data: { last_activity_at: new Date() } });
+
+    const leadUpdate: Record<string, any> = { last_activity_at: new Date() };
+    // Allow the activity form to also schedule the lead's next follow-up
+    if (next_follow_up_date !== undefined) {
+      leadUpdate.next_follow_up_date =
+        typeof next_follow_up_date === 'string' && next_follow_up_date.trim() !== ''
+          ? new Date(`${next_follow_up_date}T00:00:00.000Z`)
+          : null;
+    }
+    await this.prisma.crm_leads.update({ where: { s_no: leadId }, data: leadUpdate });
     await this.recalculateScore(leadId);
     return activity;
   }
@@ -937,7 +946,7 @@ export class CrmService {
     if (!existing) throw new NotFoundException('Activity not found');
     await this.getLead(existing.lead_id, access);
 
-    const { user_id, lead_id, s_no, created_at, ...rest } = data ?? {};
+    const { user_id, lead_id, s_no, created_at, next_follow_up_date, ...rest } = data ?? {};
 
     // Normalize date fields
     const dateFields = ['scheduled_at', 'completed_at'];
@@ -956,6 +965,19 @@ export class CrmService {
       where: { s_no: activityId },
       data: rest,
     });
+
+    // Allow the activity form to also update the lead's next follow-up
+    if (next_follow_up_date !== undefined && existing.lead_id) {
+      await this.prisma.crm_leads.update({
+        where: { s_no: existing.lead_id },
+        data: {
+          next_follow_up_date:
+            typeof next_follow_up_date === 'string' && next_follow_up_date.trim() !== ''
+              ? new Date(`${next_follow_up_date}T00:00:00.000Z`)
+              : null,
+        },
+      });
+    }
 
     // Recalculate lead score if lead_id is known
     if (existing.lead_id) {
