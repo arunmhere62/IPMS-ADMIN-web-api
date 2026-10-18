@@ -11,6 +11,8 @@ import { Request } from 'express';
 import { UsersService } from './users.service';
 import { HeadersValidationGuard } from '../common/guards/headers-validation.guard';
 import { RequireHeaders } from '../common/decorators/require-headers.decorator';
+import { RequirePermission } from '../common/rbac/require-permission.decorator';
+import { ADMIN_PERMISSIONS, permissionKey } from '../common/rbac/permissions.catalog';
 
 @ApiTags('users')
 @Controller('users')
@@ -28,6 +30,7 @@ export class UsersController {
   }
 
   @Get(':id')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.USERS.VIEW))
   @ApiOperation({ summary: 'Get user by id' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'User fetched successfully' })

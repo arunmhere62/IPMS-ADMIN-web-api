@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client-management';
 import { ManagementPrismaService } from '../prisma/management-prisma.service';
 import { ConsumerPrismaService } from '../prisma/consumer-prisma.service';
 import { toE164 } from '../common/utils/phone.util';
@@ -650,7 +651,7 @@ export class CrmService {
     return lead;
   }
 
-  async listLeads(params: { page?: number; limit?: number; stage?: string; priority?: string; assigned_to?: number; search?: string; sortBy?: string; sortOrder?: string; scoreMin?: number; scoreMax?: number }, access: ContactAccess): Promise<[any[], number]> {
+  async listLeads(params: { page?: number; limit?: number; stage?: string; priority?: string; assigned_to?: number; search?: string; sortBy?: string; sortOrder?: string; scoreMin?: number; scoreMax?: number; followUp?: string; lastContact?: string }, access: ContactAccess): Promise<[any[], number]> {
     const page = Math.max(1, Number(params.page ?? 1));
     const limit = Math.min(100, Math.max(1, Number(params.limit ?? 20)));
     const where: any = { is_deleted: false, crm_contacts: this.contactScope(access) };
@@ -661,6 +662,84 @@ export class CrmService {
       where.score = {};
       if (params.scoreMin != null) where.score.gte = Number(params.scoreMin);
       if (params.scoreMax != null) where.score.lte = Number(params.scoreMax);
+    }
+
+    // Follow-up quick filter: overdue / today / upcoming / none / needs
+    if (params.followUp) {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(todayStart.getTime() + 86400000);
+      const tomorrowEnd = new Date(todayStart.getTime() + 2 * 86400000);
+
+      // Active pipeline stages — leads that still need follow-up (exclude terminal states)
+      const activeStages = ['NEW', 'CONTACTED', 'CALL_BACK_LATER', 'NO_RESPONSE', 'SWITCHED_OFF', 'INTERESTED', 'QUALIFIED', 'DEMO_SCHEDULED', 'DEMO_COMPLETED', 'PROPOSAL_SENT', 'NEGOTIATION'];
+
+      switch (params.followUp) {
+        case 'overdue':
+          where.next_follow_up_date = { lt: todayStart };
+          break;
+        case 'today':
+          where.next_follow_up_date = { gte: todayStart, lt: todayEnd };
+          break;
+        case 'tomorrow':
+          where.next_follow_up_date = { gte: todayEnd, lt: tomorrowEnd };
+          break;
+        case 'upcoming':
+          where.next_follow_up_date = { gte: tomorrowEnd };
+          break;
+        case 'none':
+          where.next_follow_up_date = null;
+          break;
+        case 'needs':
+          // Needs follow-up: overdue OR due today OR no follow-up scheduled (but still in active pipeline)
+          where.AND = [
+            { stage: { in: activeStages } },
+            {
+              OR: [
+                { next_follow_up_date: { lt: tomorrowEnd } },
+                { next_follow_up_date: null },
+              ],
+            },
+          ];
+          break;
+        case 'active':
+          where.stage = { in: activeStages };
+          break;
+      }
+    }
+
+    // Last contact quick filter: find leads not contacted recently
+    if (params.lastContact) {
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - Number(params.lastContact) * 86400000);
+      switch (params.lastContact) {
+        case 'never':
+          where.last_activity_at = null;
+          break;
+        case '7':
+          // Not contacted in 7+ days (or never)
+          where.OR = [
+            { last_activity_at: null },
+            { last_activity_at: { lt: cutoff } },
+          ];
+          break;
+        case '3':
+          where.OR = [
+            { last_activity_at: null },
+            { last_activity_at: { lt: new Date(now.getTime() - 3 * 86400000) } },
+          ];
+          break;
+        case '1':
+          where.OR = [
+            { last_activity_at: null },
+            { last_activity_at: { lt: new Date(now.getTime() - 1 * 86400000) } },
+          ];
+          break;
+        case 'recent':
+          // Contacted in last 3 days
+          where.last_activity_at = { gte: new Date(now.getTime() - 3 * 86400000) };
+          break;
+      }
     }
 
     if (params.search) {
@@ -696,24 +775,65 @@ export class CrmService {
           crm_contacts: true,
           user: true,
           crm_lead_stages: true,
-          crm_lead_activities: {
-            where: { is_deleted: false },
-            orderBy: { created_at: 'desc' },
-            take: 1,
-            select: { s_no: true, type: true, title: true, description: true, outcome: true, duration_minutes: true, created_at: true },
-          },
         },
       }),
       this.prisma.crm_leads.count({ where }),
     ]);
+
+    // Batch-fetch latest activity per lead using a single raw query (much faster than N+1 includes)
+    const leadIds = rows.map((r) => r.s_no);
+    let latestActivityMap = new Map<number, any>();
+    if (leadIds.length) {
+      const latestActivities: any[] = await this.prisma.$queryRaw`
+        SELECT a.* FROM crm_lead_activities a
+        INNER JOIN (
+          SELECT lead_id, MAX(created_at) AS max_created
+          FROM crm_lead_activities
+          WHERE is_deleted = 0 AND lead_id IN (${Prisma.join(leadIds)})
+          GROUP BY lead_id
+        ) latest ON a.lead_id = latest.lead_id AND a.created_at = latest.max_created
+        WHERE a.is_deleted = 0
+      `;
+      latestActivities.forEach((a: any) => {
+        latestActivityMap.set(a.lead_id, {
+          s_no: a.s_no,
+          type: a.type,
+          title: a.title,
+          description: a.description,
+          outcome: a.outcome,
+          duration_minutes: a.duration_minutes,
+          created_at: a.created_at,
+        });
+      });
+    }
+
     const contacts = rows.map((r) => r.crm_contacts).filter(Boolean);
     const enrichedContacts = await this.enrichWithLocation(contacts);
     const contactMap = new Map(enrichedContacts.map((c) => [c.s_no, c]));
-    const enrichedLeads = rows.map((r) => ({
-      ...r,
-      latest_activity: r.crm_lead_activities?.[0] ?? null,
-      crm_contacts: r.crm_contacts ? contactMap.get(r.crm_contacts.s_no) ?? r.crm_contacts : r.crm_contacts,
-    }));
+
+    // Compute follow-up status for each lead
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart.getTime() + 86400000);
+    const tomorrowEnd = new Date(todayStart.getTime() + 2 * 86400000);
+
+    const enrichedLeads = rows.map((r) => {
+      const followUpDate = r.next_follow_up_date ? new Date(r.next_follow_up_date) : null;
+      let follow_up_status: 'overdue' | 'today' | 'tomorrow' | 'upcoming' | 'none' = 'none';
+      if (followUpDate) {
+        if (followUpDate < todayStart) follow_up_status = 'overdue';
+        else if (followUpDate < todayEnd) follow_up_status = 'today';
+        else if (followUpDate < tomorrowEnd) follow_up_status = 'tomorrow';
+        else follow_up_status = 'upcoming';
+      }
+
+      return {
+        ...r,
+        latest_activity: latestActivityMap.get(r.s_no) ?? null,
+        follow_up_status,
+        crm_contacts: r.crm_contacts ? contactMap.get(r.crm_contacts.s_no) ?? r.crm_contacts : r.crm_contacts,
+      };
+    });
     return [enrichedLeads, total];
   }
 
@@ -758,6 +878,14 @@ export class CrmService {
     const updated = await this.prisma.crm_leads.update({ where: { s_no: id }, data: { stage } });
     await this.recalculateScore(id);
     return updated;
+  }
+
+  async assignLead(id: number, assignedTo: number | null, access: ContactAccess) {
+    await this.getLead(id, access);
+    return this.prisma.crm_leads.update({
+      where: { s_no: id },
+      data: { assigned_to: assignedTo },
+    });
   }
 
   async softDeleteLead(id: number, access: ContactAccess) {

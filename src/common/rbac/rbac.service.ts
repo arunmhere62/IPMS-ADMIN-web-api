@@ -278,6 +278,100 @@ export class RbacService {
   }
 
   /**
+   * Bulk set overrides for multiple permissions at once (used by "Allow All" / "Deny All").
+   * If granted=false and reason is empty, removes overrides instead of creating deny records.
+   */
+  async bulkSetUserPermissionOverrides(userId: number, permissionKeys: string[], granted: boolean, reason?: string) {
+    const parsed = permissionKeys
+      .map((k) => ({ key: k, parsed: parsePermissionKey(k) }))
+      .filter((x) => x.parsed != null);
+
+    if (parsed.length === 0) {
+      return this.getUserPermissionsWithStatus(userId);
+    }
+
+    const permissions = await this.managementPrisma.permission.findMany({
+      where: {
+        OR: parsed.map(({ parsed: p }) => ({
+          AND: [{ resource: p.resource }, { action: p.action as PermissionAction }],
+        })),
+      },
+    });
+
+    const permissionIds = permissions.map((p) => p.s_no);
+
+    if (granted) {
+      // Upsert all as granted=true overrides
+      await this.managementPrisma.$transaction(async (tx) => {
+        for (const permissionId of permissionIds) {
+          await tx.user_permission_override.upsert({
+            where: {
+              user_id_permission_id: {
+                user_id: userId,
+                permission_id: permissionId,
+              },
+            },
+            create: { user_id: userId, permission_id: permissionId, granted: true, reason },
+            update: { granted: true, reason },
+          });
+        }
+      });
+    } else {
+      // For deny: create/override with granted=false
+      await this.managementPrisma.$transaction(async (tx) => {
+        for (const permissionId of permissionIds) {
+          await tx.user_permission_override.upsert({
+            where: {
+              user_id_permission_id: {
+                user_id: userId,
+                permission_id: permissionId,
+              },
+            },
+            create: { user_id: userId, permission_id: permissionId, granted: false, reason },
+            update: { granted: false, reason },
+          });
+        }
+      });
+    }
+
+    return this.getUserPermissionsWithStatus(userId);
+  }
+
+  /**
+   * Bulk remove overrides for multiple permissions at once (used by "Reset All").
+   */
+  async bulkRemoveUserPermissionOverrides(userId: number, permissionKeys: string[]) {
+    const parsed = permissionKeys
+      .map((k) => ({ key: k, parsed: parsePermissionKey(k) }))
+      .filter((x) => x.parsed != null);
+
+    if (parsed.length === 0) {
+      return this.getUserPermissionsWithStatus(userId);
+    }
+
+    const permissions = await this.managementPrisma.permission.findMany({
+      where: {
+        OR: parsed.map(({ parsed: p }) => ({
+          AND: [{ resource: p.resource }, { action: p.action as PermissionAction }],
+        })),
+      },
+    });
+
+    const permissionIds = permissions.map((p) => p.s_no);
+
+    if (permissionIds.length > 0) {
+      await this.managementPrisma.user_permission_override.deleteMany({
+        where: {
+          user_id: userId,
+          permission_id: { in: permissionIds },
+        },
+      });
+    }
+
+    return this.getUserPermissionsWithStatus(userId);
+  }
+
+  /**
    * Ensure the permission catalog exists in the DB.
    * Idempotent — safe to run on every startup.
    */

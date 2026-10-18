@@ -43,6 +43,12 @@ export class LeadsController {
     return ResponseUtil.success(await this.crm.updateLeadStage(Number(id), body?.stage, this.getAccess(req)), 'Lead stage updated');
   }
 
+  @Patch(':id/assign')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_LEADS.ASSIGN))
+  async assign(@Param('id') id: string, @Body() body: { assigned_to?: number | null }, @Req() req: Request) {
+    return ResponseUtil.success(await this.crm.assignLead(Number(id), body?.assigned_to ?? null, this.getAccess(req)), 'Lead assigned');
+  }
+
   @Delete(':id')
   @RequirePermission(permissionKey(ADMIN_PERMISSIONS.CRM_LEADS.DELETE))
   async remove(@Param('id') id: string, @Req() req: Request) {

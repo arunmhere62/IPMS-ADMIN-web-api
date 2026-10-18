@@ -89,6 +89,34 @@ export class RbacController {
     return this.rbacService.setRolePermissions(roleId, body.permissions ?? []);
   }
 
+  @Post('users/:userId/permissions/bulk')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
+  @ApiOperation({ summary: 'Bulk set user permission overrides (Allow All / Deny All)' })
+  async bulkSetUserOverrides(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: { permissionKeys: string[]; granted: boolean; reason?: string },
+  ) {
+    return this.rbacService.bulkSetUserPermissionOverrides(
+      userId,
+      body.permissionKeys ?? [],
+      body.granted,
+      body.reason,
+    );
+  }
+
+  @Delete('users/:userId/permissions/bulk')
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
+  @ApiOperation({ summary: 'Bulk remove user permission overrides (Reset All)' })
+  async bulkRemoveUserOverrides(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: { permissionKeys: string[] },
+  ) {
+    return this.rbacService.bulkRemoveUserPermissionOverrides(
+      userId,
+      body.permissionKeys ?? [],
+    );
+  }
+
   @Post('users/:userId/permissions/:key')
   @RequirePermission(permissionKey(ADMIN_PERMISSIONS.RBAC.MANAGE))
   @ApiOperation({ summary: 'Add or update a user permission override' })

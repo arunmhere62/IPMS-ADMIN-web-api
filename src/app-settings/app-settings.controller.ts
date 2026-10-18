@@ -105,7 +105,7 @@ export class AppSettingsController {
   // ─── Activity Logs (read-only) ───
 
   @Get('activity-logs')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ACTIVITY_LOGS.VIEW))
   @ApiOperation({ summary: 'List activity logs with filters' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -135,7 +135,7 @@ export class AppSettingsController {
   }
 
   @Get('activity-stats')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.APP_SETTINGS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ACTIVITY_LOGS.VIEW))
   @ApiOperation({ summary: 'Get aggregated activity stats' })
   async getActivityStats() {
     return this.appSettingsService.getActivityStats();

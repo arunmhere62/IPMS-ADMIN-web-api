@@ -28,7 +28,7 @@ export class SalesOrganizationsController {
   constructor(private readonly service: SalesOrganizationsService) {}
 
   @Get()
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'List sales organizations with employee counts' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -56,7 +56,7 @@ export class SalesOrganizationsController {
   }
 
   @Get('active')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'List active sales organizations (for dropdowns)' })
   @ApiResponse({ status: 200, description: 'Active sales organizations fetched successfully' })
   async findAllActive() {
@@ -64,7 +64,7 @@ export class SalesOrganizationsController {
   }
 
   @Get(':id')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'Get sales organization by id' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Sales organization fetched successfully' })
@@ -74,7 +74,7 @@ export class SalesOrganizationsController {
   }
 
   @Get(':id/roles-status')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'Get role assignment status for an org (has PARTNER_ADMIN, available roles)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Role status fetched successfully' })
@@ -83,7 +83,7 @@ export class SalesOrganizationsController {
   }
 
   @Get(':id/employees')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.VIEW))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.VIEW))
   @ApiOperation({ summary: 'List employees (users) of a sales organization' })
   @ApiParam({ name: 'id', type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
@@ -105,7 +105,7 @@ export class SalesOrganizationsController {
   }
 
   @Post()
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.CREATE))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.CREATE))
   @ApiOperation({ summary: 'Create a new sales organization' })
   @ApiResponse({ status: 201, description: 'Sales organization created successfully' })
   @ApiResponse({ status: 409, description: 'Name already exists' })
@@ -114,7 +114,7 @@ export class SalesOrganizationsController {
   }
 
   @Patch(':id')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.UPDATE))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.UPDATE))
   @ApiOperation({ summary: 'Update sales organization (name, description)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Sales organization updated successfully' })
@@ -127,7 +127,7 @@ export class SalesOrganizationsController {
   }
 
   @Post(':id/deactivate')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.UPDATE))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.UPDATE))
   @ApiOperation({ summary: 'Deactivate a sales organization (sets status=INACTIVE)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Sales organization deactivated successfully' })
@@ -137,7 +137,7 @@ export class SalesOrganizationsController {
   }
 
   @Post(':id/reactivate')
-  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.ORGANIZATIONS.UPDATE))
+  @RequirePermission(permissionKey(ADMIN_PERMISSIONS.SALES_ORGANIZATIONS.UPDATE))
   @ApiOperation({ summary: 'Reactivate a sales organization (sets status=ACTIVE)' })
   @ApiParam({ name: 'id', type: Number })
   @ApiResponse({ status: 200, description: 'Sales organization reactivated successfully' })

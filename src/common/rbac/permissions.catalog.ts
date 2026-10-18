@@ -61,13 +61,21 @@ export const ADMIN_PERMISSIONS = {
     MANAGE: makePermission('tickets', 'manage', 'Manage all tickets'),
   },
 
-  // Organizations / PGs
-  ORGANIZATIONS: {
-    VIEW: makePermission('organizations', 'view', 'View organizations'),
-    CREATE: makePermission('organizations', 'create', 'Create organizations'),
-    UPDATE: makePermission('organizations', 'update', 'Update organizations'),
-    DELETE: makePermission('organizations', 'delete', 'Delete organizations'),
-    MANAGE: makePermission('organizations', 'manage', 'Manage all organizations'),
+  // Organizations / PGs — split into Sales and Client
+  SALES_ORGANIZATIONS: {
+    VIEW: makePermission('sales_organizations', 'view', 'View sales organizations'),
+    CREATE: makePermission('sales_organizations', 'create', 'Create sales organizations'),
+    UPDATE: makePermission('sales_organizations', 'update', 'Update sales organizations'),
+    DELETE: makePermission('sales_organizations', 'delete', 'Delete sales organizations'),
+    MANAGE: makePermission('sales_organizations', 'manage', 'Manage all sales organizations'),
+  },
+
+  CLIENT_ORGANIZATIONS: {
+    VIEW: makePermission('client_organizations', 'view', 'View client organizations'),
+    CREATE: makePermission('client_organizations', 'create', 'Create client organizations'),
+    UPDATE: makePermission('client_organizations', 'update', 'Update client organizations'),
+    DELETE: makePermission('client_organizations', 'delete', 'Delete client organizations'),
+    MANAGE: makePermission('client_organizations', 'manage', 'Manage all client organizations'),
   },
 
   // Subscription plans
@@ -227,6 +235,11 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
 
   SALES_MANAGER: [
     buildPermissionKey('dashboard', 'view'),
+    buildPermissionKey('sales_organizations', 'view'),
+    buildPermissionKey('sales_organizations', 'create'),
+    buildPermissionKey('sales_organizations', 'update'),
+    buildPermissionKey('sales_organizations', 'delete'),
+    buildPermissionKey('client_organizations', 'view'),
     buildPermissionKey('crm.contacts', 'view'),
     buildPermissionKey('crm.contacts', 'create'),
     buildPermissionKey('crm.contacts', 'update'),
