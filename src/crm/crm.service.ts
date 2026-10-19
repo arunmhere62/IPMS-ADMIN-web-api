@@ -84,6 +84,14 @@ export class CrmService {
     if (params.status) where.status = params.status as any;
     if (params.source) where.source = params.source as any;
 
+    // Hide contacts that already have an active lead — they live in the Leads
+    // list now. An explicit "converted" status filter still surfaces them so
+    // the Status dropdown stays useful. Contacts whose lead was soft-deleted
+    // resurface here automatically.
+    if (params.status !== 'CONVERTED_TO_LEAD' && params.status !== 'CONVERTED_TO_SUBSCRIBER') {
+      where.NOT = { crm_leads: { is: { is_deleted: false } } };
+    }
+
     const allowedSortFields = ['s_no', 'pg_name', 'owner_name', 'phone', 'status', 'source', 'created_at', 'no_of_rooms', 'google_rating'];
     const sortBy = allowedSortFields.includes(params.sortBy ?? '') ? params.sortBy! : 'created_at';
     const sortOrder = params.sortOrder === 'asc' ? 'asc' : 'desc';
